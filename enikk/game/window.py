@@ -108,7 +108,7 @@ def _has_owner_link(fg: int, hwnd: int) -> bool:
 def _is_process_descendant_of(candidate_pid: int, ancestor_pid: int, max_hops: int = 4) -> bool:
     """True when candidate_pid's process tree contains ancestor_pid.
 
-    CEF/Electron apps (e.g. iOA: tray shell + ztsmtbsclient renderers) spawn
+    CEF/Electron apps (tray shell + separate renderer subprocesses) spawn
     subprocesses that own top-level HWNDs with NO Win32 owner chain —
     process ancestry is the only reliable link for those.
     """
@@ -153,20 +153,20 @@ def _looks_like_inapp_popup(fg: int) -> bool:
 # Style/geometry alone can't prove app ownership (review round-3 P1: another
 # app's floating tool panel satisfied popup-style + containment), so the
 # fallback only accepts windows whose class is explicitly known to be an
-# in-app popup surface. Extend via env IOA_POPUP_CLASS_WHITELIST="A,B".
+# in-app popup surface. Extend via env MANUFEX_POPUP_CLASS_WHITELIST="A,B".
 def _popup_class_whitelist() -> frozenset[str]:
-    extra = os.environ.get("IOA_POPUP_CLASS_WHITELIST", "")
+    extra = os.environ.get("MANUFEX_POPUP_CLASS_WHITELIST", "")
     classes = {
-        "TXMenuWindow",  # Tencent native menu dropdowns (iOA/WeCom)
-        # CEF/Chromium/Electron host surfaces (e.g. iOA's IOA_LOGIN_Monitor):
-        # borderless WS_POPUP windows living in SIBLING process trees — they
-        # can NEVER satisfy rules 2-4 (no owner chain, no shared ancestry),
-        # so style+containment+size is the only workable acceptance path.
-        # REGRESSION NOTE (2026-09-07): the round-3 whitelist dropped these
-        # and made the iOA login page untypable — the login flow had been
-        # working via the pre-round-3 spatial rule. Rule 5's remaining
-        # constraints (smaller than target, popup-styled, >50% contained)
-        # still exclude framed peer-app windows like editors/terminals.
+        "TXMenuWindow",  # native menu dropdowns of common desktop IM/security apps
+        # CEF/Chromium/Electron host surfaces (login monitors, embedded
+        # browsers): borderless WS_POPUP windows living in SIBLING process
+        # trees — they can NEVER satisfy rules 2-4 (no owner chain, no
+        # shared ancestry), so style+containment+size is the only workable
+        # acceptance path. REGRESSION NOTE: dropping these from the
+        # whitelist once made such login pages untypable. Rule 5's
+        # remaining constraints (smaller than target, popup-styled, >50%
+        # contained) still exclude framed peer-app windows like
+        # editors/terminals.
         "Chrome_WidgetWin_0", "Chrome_WidgetWin_1",
         "Chrome_RenderWidgetHostHWND",
     }

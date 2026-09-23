@@ -484,11 +484,10 @@ _SNAPSHOT_JS = """
   const OVERLAY_HINT = /modal|dialog|drawer|popup|dropdown|popover|select|overlay|mask|lightbox|ant-modal|tc-modal|app-ioa-list/i;
 
   // Deep collect: document.querySelectorAll does NOT pierce shadow DOM —
-  // Tencent Cloud console (QDReact) renders dialogs inside shadow roots,
-  // which made web_snapshot completely blind to open dialogs (2026-09-07
-  // live session: agent clicked 新增账户, dialog opened, snapshot showed
-  // zero dialog elements and a wrong truncated:false, so the agent
-  // abandoned web mode for slow desktop OCR).
+  // some admin consoles render dialogs inside shadow roots, which makes
+  // web_snapshot completely blind to open dialogs (zero dialog elements
+  // and a wrong truncated:false, pushing the agent to abandon web mode
+  // for slow desktop OCR).
   const deepQueryAll = (root) => {
     const result = [];
     const seen = new Set();
@@ -690,8 +689,8 @@ def web_snapshot(max_elements: int = 60) -> dict:
                     "带 in_overlay 的元素属于当前弹窗/对话框（已排在最前），优先处理。",
         }
         if nodes.get("dialog_open"):
-            # Make the open dialog impossible to miss — this is what the
-            # agent needed on 2026-09-07 to stay in web mode.
+            # Make the open dialog impossible to miss — without it the
+            # agent tends to abandon web mode for slow desktop OCR.
             result["dialog_open"] = True
             result["overlay_count"] = nodes.get("overlay_count", 0)
         _note_page_state(page, result)  # 快照即观察基线：刷新 sig/url 供 stale 校验与熔断
@@ -768,8 +767,7 @@ def web_open(url: str, timeout_ms: int = 30000) -> dict:
 # Confirm-button semantic equivalence class (中文控制台确认动作同义词).
 # web_click uses it as a fallback: clicking text="保存" on a dialog whose
 # confirm button is labeled 确定/确认/提交 should succeed transparently
-# instead of failing on the label mismatch (2026-09-07: agent hunted for a
-# nonexistent 保存 button while the dialog said 确定).
+# instead of failing on the label mismatch.
 _CONFIRM_SYNONYMS = ("确定", "确认", "保存", "提交", "应用", "完成", "OK", "确 定")
 
 

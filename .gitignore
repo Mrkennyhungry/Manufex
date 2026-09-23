@@ -8,21 +8,11 @@ dist/
 
 config.yaml
 
-# Doraemon data directory (config with secrets, sessions, screenshots, logs).
-# The knowledge/ subdirectory is EXCEPTION: it is team-shared and committable
+# User data directory (config with secrets, sessions, screenshots, logs).
+# The knowledge/ subdirectory is EXCEPTION: it is project-shared and committable
 # (corrections / success_paths / kb). Ignore contents, then re-include knowledge.
 .enikk-home/*
 !.enikk-home/knowledge/
-
-# Skills are team-shared too (SKILL.md files guided real sessions — see
-# 2026-09-07 ioa session). Only WORK skills are shared; upstream game samples
-# (nikke, wuthering-waves) and anything else stays local.
-!.enikk-home/skills/
-.enikk-home/skills/*
-!.enikk-home/skills/ioa/
-!.enikk-home/skills/ioa-actions/
-!.enikk-home/skills/web-actions/
-!.enikk-home/skills/wecom/
 
 # Runtime logs & local artifacts
 *.log
@@ -55,22 +45,21 @@ failed_trajectories.jsonl
 # Local one-off verification scripts (may contain real credentials — never commit)
 _live_*.py
 _smoke_*.py
-move_ioa.ps1
+_move_*.ps1
 
-# Unrelated third-party dir accidentally cloned here (has its own .git)
+# Unrelated third-party dirs accidentally cloned here (each has its own .git)
 .tmp-archify/
-# jev-ultrafast 评估用浅克隆（browser-use 参考项目，不参与构建）
 .tmp-jev/
 report/
 
-# 本地配置（含智研 token 等密钥，绝不入库）
+# Local secrets (never commit)
 .env.local
 .env
 
-# 运行期生成的产物（含控制台登录态/动态账号，绝不入库）
+# Runtime-generated artifacts (login states / dynamic accounts — never commit)
 .auth/
 .runtime/
 _shots/
 
-# 用例运行期下载的安装包/客户端（PCMgrSetup*.exe 等，动辄数百 MB，绝不入库）
+# Large installers/clients downloaded during runs (hundreds of MB — never commit)
 downloads/

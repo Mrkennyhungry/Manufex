@@ -1,6 +1,6 @@
 ---
 name: web-actions
-description: "浏览器网页自动化（Playwright DOM 级）。Triggers: 浏览器, 网页, 登录, 网站, url, 控制台, 表单, 表单, 搜索, 下拉, 填写"
+description: "浏览器网页自动化（Playwright DOM 级）。Triggers: 浏览器, 网页, 登录, 网站, url, 控制台, 表单, 搜索, 下拉, 填写"
 tags: [web, playwright, browser, automation]
 platforms: [windows]
 ---
@@ -26,7 +26,7 @@ platforms: [windows]
 | `web_wait(selector, timeout_ms)` | 等待元素出现（新页签/异步加载） |
 | `web_status()` / `web_close()` | 查看页签 / 关闭浏览器（登录态保留） |
 
-## 硬性铁律（来自 web-case-gen 实战经验）
+## 硬性铁律（来自真实自动化会话的教训）
 
 1. **selector 必须来自最近的 `web_snapshot`**——禁止凭记忆、凭截图、凭上次会话猜。
    页面一点击就可能变化。
