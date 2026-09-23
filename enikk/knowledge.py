@@ -237,7 +237,8 @@ def record_run(
     lines.append("## steps")
     for pos, s in enumerate(ioa_steps, 1):
         name = str(s.get("name") or "?")
-        args = s.get("args") if isinstance(s.get("args"), dict) else {}
+        raw_args = s.get("args")
+        args: dict[Any, Any] = raw_args if isinstance(raw_args, dict) else {}
         arg_str = ", ".join(f"{k}={str(v)[:60]}" for k, v in list(args.items())[:4])
         status = "OK" if s.get("ok") else "FAIL"
         lines.append(f"{pos}. {name}({arg_str}) → {status}")
@@ -398,7 +399,8 @@ def _trace_text(steps: list[dict[str, Any]], window_resolver=None, limit: int = 
     lines: list[str] = []
     for pos, s in enumerate(steps, 1):
         name = str(s.get("name") or "?")
-        args = s.get("args") if isinstance(s.get("args"), dict) else {}
+        raw_args = s.get("args")
+        args: dict[Any, Any] = raw_args if isinstance(raw_args, dict) else {}
         parts: list[str] = []
         for k, v in args.items():
             v_str = str(v)

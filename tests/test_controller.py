@@ -262,7 +262,7 @@ class TestScroll:
         controller.window.get_client_region = MagicMock(
             return_value=MagicMock(left=100, top=100, width=800, height=600)
         )
-        controller._force_foreground = MagicMock(return_value=True)
+        controller._require_foreground = MagicMock(return_value=None)
         controller.input.scroll = MagicMock(return_value={"success": True})
 
         with caplog.at_level("INFO", logger="enikk.controller"):
@@ -272,7 +272,7 @@ class TestScroll:
 
         assert result["success"] is True
         assert "Scroll down to view list" in caplog.text
-        controller._force_foreground.assert_called_once_with(12345)
+        controller._require_foreground.assert_called_once_with(12345)
         # Verify coordinate conversion: 500/1000 * 800 + 100 = 500
         controller.input.scroll.assert_called_once_with(500, 400, 3, "vertical")
 
@@ -281,7 +281,7 @@ class TestScroll:
         controller.window.get_client_region = MagicMock(
             return_value=MagicMock(left=0, top=0, width=1000, height=1000)
         )
-        controller._force_foreground = MagicMock(return_value=True)
+        controller._require_foreground = MagicMock(return_value=None)
         controller.input.scroll = MagicMock(return_value={"success": True})
 
         result = controller.scroll(
@@ -306,23 +306,21 @@ class TestHotkey:
 
     def test_success(self, controller):
         controller.window.is_valid = MagicMock(return_value=True)
-        controller._force_foreground = MagicMock(return_value=True)
+        controller._require_foreground = MagicMock(return_value=None)
         controller.input.hotkey = MagicMock()
 
-        result = controller.hotkey(keys=["alt", "left"], hwnd=12345)
+        result = controller.hotkey(keys=["ctrl", "c"], hwnd=12345)
 
         assert result["success"] is True
-        assert result["keys"] == ["alt", "left"]
-        controller._force_foreground.assert_called_once_with(12345)
-        controller.input.hotkey.assert_called_once_with("alt", "left")
+        assert result["keys"] == ["ctrl", "c"]
+        controller._require_foreground.assert_called_once_with(12345)
+        controller.input.hotkey.assert_called_once_with("ctrl", "c")
 
-    def test_triple_key_combo(self, controller):
+    def test_disallowed_combo_blocked(self, controller):
         controller.window.is_valid = MagicMock(return_value=True)
-        controller._force_foreground = MagicMock(return_value=True)
-        controller.input.hotkey = MagicMock()
 
         result = controller.hotkey(keys=["ctrl", "shift", "escape"], hwnd=12345)
 
-        assert result["success"] is True
-        assert result["keys"] == ["ctrl", "shift", "escape"]
-        controller.input.hotkey.assert_called_once_with("ctrl", "shift", "escape")
+        assert result["success"] is False
+        assert "HOTKEY_BLOCKED" in result["error"]
+        assert result["allowed"] == ["ctrl+c", "ctrl+v", "ctrl+a"]

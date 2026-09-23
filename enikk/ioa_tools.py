@@ -356,7 +356,7 @@ class ParserClient:
             if not isinstance(item, dict):
                 continue
             try:
-                index = int(item.get("id"))
+                index = int(item.get("id"))  # type: ignore[arg-type]  # None/str 由 except 兜底
             except (TypeError, ValueError):
                 continue
             icons.append({"index": index, "caption": str(item.get("content") or "")[:120]})
@@ -373,6 +373,12 @@ class _IoAState:
         self._lock = threading.RLock()
         self._windows: dict[str, dict[str, Any]] = {}  # window_id -> info
         self._parser: ParserClient | None = None
+        # session cleanup tracking: apps the agent launched (pid -> meta),
+        # closed only by cleanup_session_footprint — never user-opened windows.
+        self._launched_apps: dict[int, dict[str, Any]] = {}
+        # last analyze result per window (for analyze→click auto-sedimentation):
+        # window_id -> {"elements": [{text, bbox}], "t": time, "exe": str, "page": str}
+        self._last_analyze: dict[str, dict[str, Any]] = {}
 
     @property
     def parser(self) -> ParserClient:
@@ -382,12 +388,6 @@ class _IoAState:
 
 
 _STATE = _IoAState()
-# session cleanup tracking: apps the agent launched (pid -> meta), closed
-# only by cleanup_session_footprint — never user-opened windows.
-_STATE._launched_apps: dict[int, dict[str, Any]] = {}
-# last analyze result per window (for analyze→click auto-sedimentation):
-# window_id -> {"elements": [{text, bbox}], "t": time, "exe": str, "page": str}
-_STATE._last_analyze: dict[str, dict[str, Any]] = {}
 
 
 def _list_visible_windows() -> list[dict[str, Any]]:
@@ -1381,6 +1381,7 @@ def ioa_search_kb(query: str, top_k: int = 4, source: str = "all") -> dict:
     from . import knowledge as kb
     if not query or not query.strip():
         return {"success": False, "error": "query 不能为空"}
+    sources: tuple[str, ...]
     if source == "all":
         sources = kb.VALID_SOURCES
     elif source in kb.VALID_SOURCES:
@@ -1456,8 +1457,8 @@ def _require_foreground(hwnd: int) -> dict | None:
     try:
         fg_hwnd = win32gui.GetForegroundWindow()
         fg_title = win32gui.GetWindowText(fg_hwnd)[:60]
-        fg_exe = _window_info(fg_hwnd) or {}
-        fg_exe = fg_exe.get("exe", "")
+        fg_info = _window_info(fg_hwnd) or {}
+        fg_exe = str(fg_info.get("exe", ""))
     except Exception:
         pass
     return {
@@ -1539,6 +1540,8 @@ def ioa_paste_clipboard_file(window_id: str, path: str = "", paths: list[str] | 
     if hwnd is None:
         return err
     controller = _controller()
+    if controller is None:
+        return {"success": False, "error": "controller 未初始化"}
 
     header = struct.pack("<IiiII", 20, 0, 0, 0, 1)  # DROPFILES(pFiles=20, fWide=1)
     payload = header + ("\0".join(files) + "\0\0").encode("utf-16le")

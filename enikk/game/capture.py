@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 import cv2
 import mss
@@ -73,7 +74,7 @@ class CaptureService:
             win32gui.ReleaseDC(hwnd, hwnd_dc)
             if not ok:
                 logger.debug("PrintWindow returned 0 for hwnd=%d", hwnd)
-            image = np.frombuffer(data, dtype=np.uint8).reshape(info["bmHeight"], info["bmWidth"], 4)
+            image: Any = np.frombuffer(data, dtype=np.uint8).reshape(info["bmHeight"], info["bmWidth"], 4)
             image = cv2.cvtColor(image, cv2.COLOR_BGRA2BGR)
             region = self.window.get_client_region(hwnd)
             if region is not None:

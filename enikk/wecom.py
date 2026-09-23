@@ -39,6 +39,7 @@ import time
 import uuid
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
+from typing import Any
 
 import requests
 
@@ -178,7 +179,7 @@ class WeComWebhookClient:
 
     def send_text(self, content: str, mentioned_list: list[str] | None = None) -> None:
         content = content[:2048]
-        payload = {"msgtype": "text", "text": {"content": content}}
+        payload: dict[str, Any] = {"msgtype": "text", "text": {"content": content}}
         if mentioned_list:
             payload["text"]["mentioned_list"] = mentioned_list
         self._post(payload)
@@ -295,7 +296,7 @@ class WeComBridge:
         self._webhook: WeComWebhookClient | None = None
         self._app: WeComAppClient | None = None
         self._crypto: WeComCrypto | None = None
-        self._longconn = None  # WeComLongConnClient | None (imported lazily)
+        self._longconn: Any = None  # WeComLongConnClient (imported lazily)
         self._longconn_status = "disabled"
         self._rate_limiter = _RateLimiter(_MAX_MSG_PER_MIN)
         self._longconn_rate_limiter = _RateLimiter(_LONGCONN_MAX_PER_MIN)

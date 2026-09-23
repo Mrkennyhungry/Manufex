@@ -32,7 +32,7 @@ import json
 import logging
 import uuid
 from dataclasses import dataclass, field
-from typing import Awaitable, Callable
+from typing import Any, Awaitable, Callable
 
 logger = logging.getLogger(__name__)
 
@@ -88,7 +88,7 @@ class WeComLongConnClient:
         self._on_message = on_message
         self._on_event = on_event
         self._on_status_change = on_status_change
-        self._ws = None
+        self._ws: Any = None
         self._connected = False
         self._stopping = False
         self._pending: dict[str, asyncio.Future] = {}

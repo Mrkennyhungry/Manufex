@@ -647,7 +647,7 @@ def web_snapshot(max_elements: int = 60) -> dict:
         except Exception:
             pass
         try:
-            nodes = page.evaluate(_SNAPSHOT_JS) or []
+            nodes: dict[str, Any] = page.evaluate(_SNAPSHOT_JS) or {}
         except Exception as exc:
             return {"success": False, "error": f"采集失败: {exc.__class__.__name__}: {exc}"}
         elements = nodes.get("elements") or []
@@ -661,7 +661,7 @@ def web_snapshot(max_elements: int = 60) -> dict:
             每次快照 ~3-4K token，agent 又被要求每次点击后重新快照，是 AI
             兜底会话上下文膨胀到 65K+（单次 prefill 30s+）的主因。
             """
-            out = {"selector": str(el.get("selector", ""))[:80]}
+            out: dict[str, Any] = {"selector": str(el.get("selector", ""))[:80]}
             text = str(el.get("text") or "").strip()
             if text:
                 out["text"] = text[:40]
