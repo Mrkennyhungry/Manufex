@@ -16,6 +16,9 @@ from .version import __version__, __description__  # noqa: E402
 
 _parser = argparse.ArgumentParser(prog="enikk", description=__description__)
 _parser.add_argument("--home-dir", type=str, help="Override Enikk home directory")
+_parser.add_argument("--no-window", action="store_true",
+                     help="Run the backend server without the webview window; open the "
+                          "dashboard in a browser (combine with MANUFEX_PORT to fix the port)")
 _parser.add_argument("--start-minimized", action="store_true", help="Start minimized to system tray")
 _args, _ = _parser.parse_known_args()
 
@@ -404,12 +407,17 @@ def main():
                 cron_runner.start()
                 logger.info("Cron runner started (interval=%ds)", cfg.cron.tick_interval)
 
-            logger.info("Starting API server on %s (random port)", server_host)
+            # Fixed port (env MANUFEX_PORT) when running without the bundled
+            # webview window — e.g. opening the dashboard in a system browser.
+            requested_port = int(os.environ.get("MANUFEX_PORT", "0") or 0)
+            logger.info("Starting API server on %s (port=%s)", server_host,
+                        requested_port or "random")
             _set_status("Starting server…")
             app = create_app(eternity, im_bridge=im_bridge, wecom_bridge=wecom_bridge, get_update_info=get_update_info, cron_runner=cron_runner)
             _, actual_port = start_server(
                 app,
                 host=server_host,
+                port=requested_port,
                 timeout_graceful_shutdown=timeout,
             )
             logger.info("API server started on http://%s:%s/", server_host, actual_port)
@@ -447,7 +455,11 @@ def main():
                                   model_name=cfg.model.default or None)
 
             _set_status("Ready")
-            _window_ref[0].load_url(f"http://{server_host}:{actual_port}?lang={cfg.language}")
+            if _window_ref[0] is not None:
+                _window_ref[0].load_url(f"http://{server_host}:{actual_port}?lang={cfg.language}")
+            else:
+                logger.info("No window: dashboard available at http://%s:%s/?lang=%s",
+                            server_host, actual_port, cfg.language)
             logger.info("Startup total: %.2fs", _time.time() - _start_time)
         except Exception as e:
             logger.exception("Startup worker failed")
@@ -503,14 +515,27 @@ def main():
     # the worker thread initialises the backend, then navigates to the app.
     try:
         _icon = Path(__file__).parent / "static" / "enikk-logo.ico"
-        start_webview(
-            html=_loading_html(),
-            icon_path=_icon,
-            debug=True,
-            minimized=_args.start_minimized,
-            on_closing=_on_closing,
-            on_ready=_on_ready,
-        )
+        if _args.no_window:
+            # Headless: backend only; open the dashboard in a browser.
+            # (webview.start would block the main thread, so it is skipped.)
+            logger.info("--no-window: starting backend only")
+            threading.Thread(target=_startup_worker, daemon=True,
+                             name="startup-worker").start()
+            logger.info("Press Ctrl+C to stop.")
+            try:
+                while True:
+                    time.sleep(3600)
+            except KeyboardInterrupt:
+                logger.info("KeyboardInterrupt received")
+        else:
+            start_webview(
+                html=_loading_html(),
+                icon_path=_icon,
+                debug=True,
+                minimized=_args.start_minimized,
+                on_closing=_on_closing,
+                on_ready=_on_ready,
+            )
     except KeyboardInterrupt:
         logger.info("KeyboardInterrupt received")
     except Exception as e:
