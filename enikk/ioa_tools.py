@@ -1115,12 +1115,13 @@ _SYSTEM_APP_DIRS = [
     os.environ.get("SystemRoot", r"C:\Windows"),
 ]
 
-# ── 被测 iOA 客户端 vs 系统自带 iOA（2026-09-17 实测事故的硬拦截）─────────────
-# 事故：AI 用 `C:\Users\Public\Desktop\iOA.lnk` 启动了**系统自带** iOA
-# （`C:\Program Files (x86)\iOA\iOAClient.exe`，欢迎页显示「手机iOA扫码/Token登录」），
-# 随后把这个窗口当成被测客户端，一路绑定/分析/断言全错，还把它带到前台抢走焦点。
-# 被测客户端在 ZtsmEnt 下（`.enikk-home/qcl_vars.yaml` → `IOA_CLIENT_EXE`，
-# 用例变量导出时同名注入环境变量），通常是 `...\ZtsmEnt\<ver>\ztsmtray.exe`。
+# ── target-app vs system-bundled lookalike (hard guard from a real incident) ──
+# Incident: the agent launched a system-bundled lookalike via a public-desktop
+# .lnk, then bound/analyzed/asserted against the WRONG window — every later
+# step silently misfired and the lookalike stole foreground focus.
+# The configured target exe (env IOA_CLIENT_EXE, or the same key in a local
+# vars yaml) is the single source of truth; system-bundled directories and
+# exe names are hard-refused by ioa_launch_app.
 _FORBIDDEN_IOA_DIRS = (
     r"c:\program files (x86)\ioa",
     r"c:\program files\ioa",
@@ -1130,7 +1131,7 @@ _FORBIDDEN_IOA_LINK_STEMS = ("ioa", "ioaclient")
 
 
 def _configured_ioa_client() -> str:
-    """被测 iOA 客户端路径：环境变量（用例变量导出）优先，其次 .enikk-home/qcl_vars.yaml。"""
+    """Configured target-app exe path: env IOA_CLIENT_EXE first, then a local vars yaml."""
     env = (os.environ.get("IOA_CLIENT_EXE") or "").strip()
     if env:
         return env
