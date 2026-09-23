@@ -138,7 +138,7 @@ _MAX_SESSION_FILES = 200
 _MAX_DELETE_OPS = 100
 
 
-# ── Settings resolution (env → ioabot settings) ──────────────────────────
+# ── Settings resolution (env → optional external settings provider) ──────────────────────────
 
 def _config_parser_settings() -> tuple[str, str]:
     """Parser settings from the workbench UI (Config.parser, persisted in config.yaml)."""
@@ -156,7 +156,7 @@ def _resolve_parser_settings() -> tuple[str, str]:
     """Resolve PARSER_SERVICE_URL / PARSER_SERVICE_TOKEN.
 
     Priority: UI config (settings dialog → config.yaml) → env vars →
-    ioabot/settings.py if importable. Empty values otherwise (tools report a
+    an optional external settings module if importable. Empty values otherwise (tools report a
     config error instead of guessing).
     """
     url, token = _config_parser_settings()
@@ -166,13 +166,8 @@ def _resolve_parser_settings() -> tuple[str, str]:
     token = token or (os.getenv("PARSER_SERVICE_TOKEN") or "").strip()
     if url and token:
         return url, token
-    try:  # ioabot is an external project; settings may not be importable here
-        from ioabot import settings as ioa_settings  # type: ignore
-    except Exception:
-        ioa_settings = None
-    if ioa_settings is not None:
-        url = url or str(getattr(ioa_settings, "PARSER_SERVICE_URL", "") or "").strip().rstrip("/")
-        token = token or str(getattr(ioa_settings, "PARSER_SERVICE_TOKEN", "") or "").strip()
+    # (integration hook: an optional external settings provider could inject
+    #  PARSER_SERVICE_URL / PARSER_SERVICE_TOKEN here — none in the OSS build)
     return url, token
 
 
@@ -293,7 +288,7 @@ class ParserClient:
     def parse(self, frame: np.ndarray, engine: str = "omni") -> dict[str, Any]:
         url, token = _resolve_parser_settings()
         if not url or not token:
-            return {"error": "PARSER_NOT_CONFIGURED: 需要 PARSER_SERVICE_URL 和 PARSER_SERVICE_TOKEN（env 或 ioabot settings）"}
+            return {"error": "PARSER_NOT_CONFIGURED: set PARSER_SERVICE_URL and PARSER_SERVICE_TOKEN (env or Settings)"}
         jpeg, enc_w, enc_h = _encode_frame_jpeg(frame)
         headers = _parser_headers(token)
         last_error = ""
@@ -569,7 +564,7 @@ def ioa_pick_window(hwnd: Any = None, label: str = "") -> dict:
     #      这种报错对模型没有任何指导意义，它只会原样重试。改为返回可执行的指引 + 候选列表。
     #   ② 传字符串句柄（"984636" / "0x1F30CC"）或从 ioa_list_windows 复制来的 dict/list，
     #      统一归一化成 int。
-    #   ③ 只给了标题字符串（如 "腾讯 iOA"）时当 label 用，按标题/进程名唯一匹配。
+    #   ③ 只给了标题字符串时当 label 用，按标题/进程名唯一匹配。
     raw = hwnd
     if isinstance(raw, dict):
         raw = raw.get("hwnd")
@@ -660,7 +655,7 @@ def set_topmost(hwnd: int, on: bool) -> None:
 
 
 def force_foreground(hwnd: int) -> bool:
-    """强制窗口置前台（UATA win_uia/engine.py bring_to_foreground 同款）。
+    """强制窗口置前台（lineage: upstream win_uia engine, same approach）。
 
     裸 SetForegroundWindow 会被 Windows 前台锁静默拒绝（pywin32 报
     (3, 'SetForegroundWindow', '系统找不到指定的路径') 等）；
@@ -688,7 +683,7 @@ def force_foreground(hwnd: int) -> bool:
                 attached.append(t)
         user32.ShowWindow(hwnd, 9)  # SW_RESTORE
         user32.BringWindowToTop(hwnd)
-        # iOAbot 套路：TOPMOST→NOTOPMOST 强制提 z-order——对付逻辑前台但
+        # Upstream technique: TOPMOST→NOTOPMOST forced z-order bump — handles the
         # 被 TOPMOST 窗口（IDE 悬浮面板等）视觉遮挡的情况
         SWP_NOSIZE, SWP_NOMOVE = 0x0001, 0x0002
         user32.SetWindowPos(hwnd, -1, 0, 0, 0, 0, SWP_NOSIZE | SWP_NOMOVE)   # HWND_TOPMOST
@@ -915,11 +910,11 @@ def ioa_press_key(window_id: str, key: str, count: int = 1) -> dict:
         "enter", "tab", "escape", "backspace", "space", "delete", "home", "end",
         "pageup", "pagedown", "up", "down", "left", "right",
     }
-    # 组合键策略（对齐 iOAbot agent_actions）：格式校验 + 危险键 blocklist，
+    # Composite-key policy (lineage: upstream agent_actions): format check + dangerous-key blocklist,
     # 不再是小白名单——LLM 写错格式（ctrl_esc / "ctrl a"）直接报错并给正确写法，
     # 防止 pyautogui 静默失败导致 agent 死循环重试。
     modifier_keys = {"ctrl", "alt", "shift", "win"}
-    # 危险组合：关窗口/锁屏/运行对话框（iOAbot confirm.py 的 CONFIRM 拦截集）
+    # dangerous combos: window close / lock screen / run dialog (lineage: upstream confirm blocklist)
     combo_blocklist = {"ctrl+w", "alt+f4", "win+l", "win+r", "ctrl+alt+delete"}
     function_keys = {f"f{i}" for i in range(1, 25)}
     key_aliases = {"control": "ctrl", "esc": "escape", "meta": "win"}
@@ -1074,7 +1069,7 @@ def ioa_parser_status() -> dict:
     elif os.getenv("PARSER_SERVICE_TOKEN"):
         token_source = "env"
     else:
-        token_source = "ioabot.settings" if configured else "missing"
+        token_source = "external settings" if configured else "missing"
     result: dict[str, Any] = {
         "configured": configured,
         "url": url or None,
@@ -1406,7 +1401,7 @@ def ioa_search_kb(query: str, top_k: int = 4, source: str = "all") -> dict:
     }
 
 
-# ── Clipboard (DLP scenario core, ported from ioabot exec_clipboard) ─────
+# ── Clipboard (lineage: upstream exec_clipboard) ─────
 
 def _bound_hwnd(window_id: str) -> tuple[int, dict[str, Any]] | tuple[None, dict]:
     controller = _controller()
@@ -1449,7 +1444,7 @@ def _is_effectively_foreground(hwnd: int) -> bool:
 def _require_foreground(hwnd: int) -> dict | None:
     """Foreground CHECK for keyboard actions — never activates.
 
-    Mirrors iOAbot buddy design: activate is a standalone step at the START of
+    Design (battle-tested): activate is a standalone step at the START of
     a flow (ioa_switch_window); press/type/paste actions are pure SendInput and
     must not re-activate windows (activation perturbs embedded webviews and
     could type into the wrong window anyway). Refuse with guidance instead.

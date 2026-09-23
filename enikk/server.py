@@ -497,14 +497,6 @@ def create_app(
             raise HTTPException(status_code=400, detail=str(e))
         return {"status": "created", "name": name}
 
-    class KnowledgeImportRequest(BaseModel):
-        include_cases: bool = True
-
-    @app.post("/api/knowledge/import")
-    def knowledge_import(req: KnowledgeImportRequest):
-        from . import knowledge as kb
-        return kb.import_from_ioabot(include_cases=req.include_cases)
-
     @app.get("/api/knowledge/search")
     def knowledge_search(
         q: str = Query(..., min_length=1),

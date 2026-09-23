@@ -4,7 +4,7 @@
 #  Origin: based on Enikk v0.11.2 (https://github.com/gtt116/enikk),
 #  forked & extended in this repository.
 #  Extensions: ioa_* toolset, multi-window binding, knowledge base
-#  (corrections / success paths / iOAbot playbooks, BM25 recall),
+#  (corrections / success paths / playbooks, BM25 recall),
 #  AI session review, remote OmniParser, WeCom integration.
 #
 #  Prerequisite: activate the Python env you installed this project
@@ -33,10 +33,6 @@ $env:IOA_DESKTOP_SKIP_CONFIRMATIONS = '1'
 
 # Elevated-desktop acknowledgement (only needed for built-in Administrator accounts)
 $env:IOA_DESKTOP_ELEVATED_EXECUTION_ACK = 'I_UNDERSTAND_ELEVATED_DESKTOP_RISK'
-
-# Optional: iOAbot knowledge import root (corrections / success_paths /
-# playbooks / DLP cases). Uncomment to override the default.
-# $env:IOABOT_ROOT = 'C:\path\to\iOAbot'
 
 Set-Location $RepoRoot
 

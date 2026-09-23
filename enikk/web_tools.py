@@ -2,7 +2,7 @@
 
 Desktop vision (ioa_analyze/UIA) works on browsers too, but DOM-level control
 is far more reliable for login flows, forms and lists: real selectors, no OCR,
-no coordinates. Ported from iOAbot agent_v2 (perceive/web_backend.py +
+no coordinates. Design lineage: the upstream agent's web backend (
 act/playwright_act.py) and the web-case-gen skill SOP.
 
 Key behaviours inherited from agent_v2:
@@ -16,7 +16,7 @@ Key behaviours inherited from agent_v2:
 Thread note: Playwright sync objects are thread-bound. The owner thread lazily
 starts the persistent context WITH a remote-debugging port; any OTHER thread
 (e.g. the AI fallback session) attaches to the SAME browser over CDP
-(same architecture as UATA ioa_console) — pages/login state are shared, the
+(CDP attach architecture) — pages/login state are shared, the
 failure-scene tab survives the handover instead of being killed by a restart.
 """
 from __future__ import annotations
@@ -301,7 +301,7 @@ def _close_thread_cdp() -> None:
 def _cdp_attach_context():
     """CDP 附着到 owner 线程的浏览器（本线程缓存一条连接）。
 
-    对齐 UATA ioa_console 的 CDP attach 架构：playwright sync API 线程
+    CDP attach 架构：playwright sync API 线程
     绑定，跨线程直接复用上下文会崩；CDP 每线程独立连接、页面全共享。
     """
     cached = getattr(_cdp_tls, "ctx", None)
@@ -456,7 +456,7 @@ def set_active_page(page) -> None:
 def _pick_page(url_contains: str = ""):
     ctx, page = _get_context()
     pages = [p for p in ctx.pages if not p.is_closed()]
-    # 优先 runner 钉住的活跃页签（QclCaseRunner 每次动作后 set_active_page），
+    # 优先调用方钉住的活跃页签（每次动作后 set_active_page），
     # 保证 AI 兜底会话从 runner 的当前页签继续，而非 pages[-1] 误入空白页签
     if _active_page is not None and _active_page in pages:
         if not url_contains or url_contains in _active_page.url:

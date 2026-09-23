@@ -1,7 +1,7 @@
 ---
 name: web-actions
-description: "浏览器网页自动化（Playwright DOM 级）。Triggers: 浏览器, 网页, 登录, 网站, url, 控制台, saas, 腾讯文档网页版, 表单, 搜索, 下拉, 填写"
-tags: [ioa, web, playwright, browser, dlp]
+description: "浏览器网页自动化（Playwright DOM 级）。Triggers: 浏览器, 网页, 登录, 网站, url, 控制台, 表单, 表单, 搜索, 下拉, 填写"
+tags: [web, playwright, browser, automation]
 platforms: [windows]
 ---
 

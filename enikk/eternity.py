@@ -51,14 +51,9 @@ ENABLED_TOOLSETS = [
     "enikk_cron",
 ]
 
-# QCL 兜底会话专用精简工具集：Computer-use 恢复只需要 ioa（桌面/视觉/资产）
+# Lean toolset for recovery sessions: computer-use repair only needs ioa
 # + web（浏览器 DOM）。全套 77 工具的 schema 基线 ~21K token：既拖慢每次
 # prefill，又会把 context_budget 压缩阈值顶穿（基线 > 阈值 → 每轮压缩抖动，
-# 每次压缩再耗一次 ~20s 摘要调用，且多次压缩会丢历史精度）。
-QCL_FALLBACK_TOOLSETS = [
-    ioa_tools.IOA_TOOLSET,
-    web_tools.WEB_TOOLSET,
-]
 
 # IOA hardening: agent-facing tools removed from the app_controller toolset for
 # this deployment. They stay importable for trusted manual use in code, but are
@@ -210,7 +205,7 @@ class SessionHandle:
 # 现在携带 page_sig（URL+可见文本头 hash）：连续 _LOOP_STEER_THRESHOLD 次
 # 动作签名完全不变 = 动作没有产生任何可观察效果 → 先 steer 注入纠正提示给
 # 模型一次自纠机会（换 selector/重新 snapshot/判 ENV_UNFIXABLE）；警告后
-# 再次连续无变化 → interrupt 终止会话（qcl_runner 按 failed 落盘，语义与
+# 再次连续无变化 → interrupt 终止会话（调用方按 failed 落盘，语义与
 # 超时强制终止一致）。
 
 _LOOP_ACTION_TOOLS = {"web_click", "web_type", "web_press_key", "web_select_option"}
@@ -572,7 +567,7 @@ class Eternity:
         mc = self.config.model
         if max_iterations is None:
             max_iterations = self.config.workspace.max_iterations
-        toolsets = QCL_FALLBACK_TOOLSETS if source == "qcl_runner" else ENABLED_TOOLSETS
+        toolsets = ENABLED_TOOLSETS
         try:
             agent = run_agent.AIAgent(
                 base_url=mc.effective_base_url or None,
@@ -622,7 +617,7 @@ class Eternity:
                     max_tokens=mc.max_tokens,
                 )
                 # 阈值 = 预算本身（非减半）：基线（系统提示词+精简工具 schema，
-                # qcl 会话 ~12K）必须低于阈值，否则每轮都触发压缩抖动
+                # 恢复会话 ~12K）必须低于阈值，否则每轮都触发压缩抖动
                 # （压缩压不掉基线，白耗一次 ~20s 摘要调用且丢精度）
                 agent.context_compressor.threshold_tokens = budget_tokens
                 logger.info(
