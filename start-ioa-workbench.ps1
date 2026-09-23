@@ -9,7 +9,7 @@
 #
 #  Prerequisite: activate the Python env you installed this project
 #  into BEFORE running this script, e.g.:
-#      conda activate doraemon
+#      conda activate manufex
 #  or:
 #      .\.venv\Scripts\Activate.ps1
 #

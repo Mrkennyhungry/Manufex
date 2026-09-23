@@ -57,7 +57,7 @@ class TrayManager:
             pystray.Menu.SEPARATOR,
             pystray.MenuItem("Exit", self._on_quit),
         )
-        self._icon = pystray.Icon("doraemon", image, "Manufex (based on Enikk)", menu)
+        self._icon = pystray.Icon("manufex", image, "Manufex (based on Enikk)", menu)
 
         thread = threading.Thread(target=self._icon.run, daemon=True, name="tray-icon")
         thread.start()

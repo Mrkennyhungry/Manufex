@@ -1147,7 +1147,7 @@ def _configured_ioa_client() -> str:
     for home in homes:
         if not home:
             continue
-        for name in ("qcl_vars.yaml", "vars.yaml"):
+        for name in ("vars.yaml",):
             path = Path(home) / name
             if not path.is_file():
                 continue
@@ -1345,7 +1345,7 @@ def ioa_launch_app(shortcut_path: str) -> dict:
     )
     if not is_test_client and (dir_hit or name_hit):
         tip = (f"（IOA_CLIENT_EXE={conf}）" if conf
-               else "（见 .enikk-home/qcl_vars.yaml → IOA_CLIENT_EXE）")
+               else "(set env IOA_CLIENT_EXE to point at your target app exe)")
         return {"success": False, "error": (
             "拒绝启动：这是**系统自带 iOA**，不是被测对象。" + tip
             + " 请改为启动该 ztsmtray.exe，或用 ioa_find_app('ztsmtray') 绑定被测客户端窗口。")}

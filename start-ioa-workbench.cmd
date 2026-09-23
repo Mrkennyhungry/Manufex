@@ -7,7 +7,7 @@ rem  review, remote OmniParser and WeCom integration.
 rem
 rem  Prerequisite: activate the Python env you installed this
 rem  project into BEFORE running this script, e.g.:
-rem      conda activate doraemon
+rem      conda activate manufex
 rem  or:
 rem      .venv\Scripts\activate.bat
 rem
