@@ -1,0 +1,1130 @@
+"""FastAPI HTTP server for Enikk."""
+import json
+import logging
+import os
+import tempfile
+import threading
+import time
+from pathlib import Path
+from typing import Callable
+
+import uvicorn
+from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi.responses import FileResponse, PlainTextResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
+from hermes_cli.auth import PROVIDER_REGISTRY
+from pydantic import BaseModel, Field, field_validator
+
+from .config import enikk_home
+from . import telemetry
+from .cron import create_job as cron_create, list_jobs as cron_list, get_job as cron_get
+from .cron import update_job as cron_update, remove_job as cron_remove
+from .cron import pause_job as cron_pause, resume_job as cron_resume, trigger_job as cron_trigger
+from .eternity import Eternity
+from .updater import UpdateInfo
+from .version import __version__, __description__
+
+logger = logging.getLogger(__name__)
+
+
+class Non200AccessFilter(logging.Filter):
+    """Filter to only show non-200 access logs."""
+    def filter(self, record):
+        msg = record.getMessage()
+        # Check if message ends with " 200" (200 status at end of line)
+        return not msg.endswith(" 200")
+
+
+class IMTestRequest(BaseModel):
+    """Request model for IM connection test."""
+    platform: str
+    token: str
+    extra: dict = {}
+
+
+def start_server(
+    app: FastAPI,
+    host: str = "127.0.0.1",
+    port: int = 0,
+    timeout_graceful_shutdown: int = 2,
+) -> tuple[threading.Thread, int]:
+    """Start uvicorn in a background thread and return (thread, actual_port).
+
+    When port=0 the OS assigns a random available port. This function blocks
+    until the server is ready before returning.
+    """
+    # Filter out 200 status access logs to reduce noise
+    access_logger = logging.getLogger("uvicorn.access")
+    access_logger.addFilter(Non200AccessFilter())
+
+    server = uvicorn.Server(
+        config=uvicorn.Config(
+            app=app,
+            host=host,
+            port=port,
+            log_level="info",
+            timeout_graceful_shutdown=timeout_graceful_shutdown,
+            log_config=None,
+        )
+    )
+    thread = threading.Thread(target=server.run, daemon=True)
+    thread.start()
+
+    while not server.started:
+        time.sleep(0.1)
+
+    actual_port = server.servers[0].sockets[0].getsockname()[1]
+    return thread, actual_port
+
+
+
+def create_app(
+    eternity: Eternity,
+    im_bridge=None,
+    wecom_bridge=None,
+    get_update_info: Callable[[], UpdateInfo | None] | None = None,
+    cron_runner=None,
+) -> FastAPI:
+    app = FastAPI(
+        title="Manufex API",
+        description=__description__,
+        version=__version__,
+    )
+
+    static_dir = Path(__file__).parent / "static"
+    if static_dir.is_dir():
+        app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
+
+        @app.get("/")
+        def index():
+            return FileResponse(str(static_dir / "index.html"))
+
+    @app.get("/health")
+    def health():
+        return {"status": "ok"}
+
+    @app.get("/api/version")
+    def get_version():
+        return {"version": __version__}
+
+    @app.get("/api/sessions")
+    def list_sessions(limit: int = Query(20, ge=1, le=100), offset: int = Query(0, ge=0)):
+        return eternity.list_sessions(limit=limit, offset=offset)
+
+    class CreateSessionRequest(BaseModel):
+        task: str
+
+    class SteerRequest(BaseModel):
+        message: str
+
+    @app.post("/api/sessions")
+    def create_session(req: CreateSessionRequest):
+        try:
+            session_id = eternity.create_session(task=req.task)
+        except RuntimeError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        telemetry.track_session_started(__version__)
+        return {"session_id": session_id}
+
+    @app.post("/api/sessions/{session_id}/steer")
+    def steer_session(session_id: str, req: SteerRequest):
+        try:
+            if not eternity.steer_session(session_id, req.message):
+                raise HTTPException(status_code=404, detail="Session not found")
+        except RuntimeError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        return {"status": "steered"}
+
+    @app.post("/api/sessions/{session_id}/stop")
+    def stop_session(session_id: str):
+        if not eternity.stop_session(session_id):
+            raise HTTPException(status_code=404, detail="Session not found or not running")
+        return {"status": "stopped"}
+
+    class RenameSessionRequest(BaseModel):
+        title: str = Field(min_length=1, max_length=100)
+
+        @field_validator("title")
+        @classmethod
+        def title_not_blank(cls, v: str) -> str:
+            if not v.strip():
+                raise ValueError("title must not be blank")
+            return v
+
+    @app.patch("/api/sessions/{session_id}")
+    def rename_session(session_id: str, req: RenameSessionRequest):
+        try:
+            if not eternity.rename_session(session_id, req.title):
+                raise HTTPException(status_code=404, detail="Session not found")
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        return {"status": "renamed"}
+
+    @app.delete("/api/sessions/{session_id}")
+    def delete_session(session_id: str):
+        if not eternity.delete_session(session_id):
+            raise HTTPException(status_code=404, detail="Session not found")
+        return {"status": "deleted"}
+
+    @app.get("/api/sessions/{session_id}/messages")
+    def get_session_messages(
+        session_id: str,
+        limit: int = Query(100, ge=1, le=500),
+        before_id: str | None = Query(None),
+    ):
+        return eternity.get_session_messages(session_id, limit=limit, before_id=before_id)
+
+    @app.get("/api/sessions/{session_id}/stream")
+    async def stream_session(session_id: str):
+        async def event_generator():
+            try:
+                async for event in eternity.get_session_stream(session_id):
+                    yield f"data: {json.dumps(event)}\n\n"
+            except Exception as e:
+                logger.error(f"Stream error for session {session_id}: {e}")
+                yield f"data: {json.dumps({'event': 'error', 'data': {'message': str(e)}})}\n\n"
+
+        return StreamingResponse(
+            event_generator(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            }
+        )
+
+    @app.get("/api/images")
+    def get_image(path: str = Query(...)):
+        p = Path(path).resolve()
+        allowed_root = Path(eternity.config.workspace.screenshot_dir).resolve()
+        if not p.is_relative_to(allowed_root):
+            raise HTTPException(status_code=403, detail="Access denied")
+        if not p.exists():
+            raise HTTPException(status_code=404, detail="Image not found")
+        return FileResponse(str(p))
+
+    @app.get("/api/open_dir")
+    def open_dir(name: str = Query(None, description="Directory name: 'home' or 'logs'"), path: str = Query(None, description="Arbitrary directory path to open")):
+        """Open a directory in file explorer."""
+        import os
+        import subprocess
+        import platform
+
+        if path:
+            target = Path(path).resolve()
+            if not target.is_dir():
+                raise HTTPException(status_code=404, detail=f"Directory not found: {path}")
+        else:
+            base_dir = enikk_home()
+            dirs = {
+                "home": base_dir,
+                "logs": base_dir / "logs",
+            }
+            result = dirs.get(name)
+            if not result:
+                raise HTTPException(status_code=400, detail=f"Unknown directory: {name}. Available: {list(dirs.keys())}")
+            target = result
+            target.mkdir(parents=True, exist_ok=True)
+
+        if platform.system() == "Windows":
+            os.startfile(str(target))
+        elif platform.system() == "Darwin":
+            subprocess.run(["open", str(target)])
+        else:
+            subprocess.run(["xdg-open", str(target)])
+
+        return {"status": "opened", "path": str(target)}
+
+    @app.get("/api/status")
+    async def status():
+        """Get system status (icon finder, IM, etc.)."""
+        # Icon finder status
+        icon_finder_available = eternity.get_icon_finder_available()
+
+        # Icon finder status
+        icon_finder_available = eternity.get_icon_finder_available()
+        icon_finder_dml = eternity.get_icon_finder_dml_enabled()
+
+        # OCR status
+        ocr_available = eternity.get_ocr_available()
+        ocr_dml = eternity.get_ocr_dml_enabled()
+
+        # IM status
+        if im_bridge is None:
+            im_status = {"enabled": False, "connected": False, "platform": None, "message": "IM bridge not configured"}
+        else:
+            connected = im_bridge.is_connected()
+            platform_name = im_bridge.get_platform_name()
+            message = "IM connected" if connected else "IM disconnected"
+            im_status = {
+                "enabled": im_bridge.is_enabled(),
+                "connected": connected,
+                "platform": platform_name,
+                "message": message,
+            }
+
+        # Cron status
+        cron_jobs = cron_list(include_disabled=False)
+        cron_enabled = eternity.config.cron.enabled if eternity.config.cron else False
+        cron_status = {
+            "enabled": cron_enabled,
+            "job_count": len(cron_jobs),
+            "message": f"{len(cron_jobs)} active job(s)" if cron_enabled else "Cron disabled",
+        }
+
+        # WeCom status
+        if wecom_bridge is None:
+            wecom_status = {"push_enabled": False, "longconn_enabled": False, "callback_enabled": False, "message": "WeCom not configured"}
+        else:
+            wecom_status = {
+                "push_enabled": wecom_bridge.is_push_enabled(),
+                "longconn_enabled": wecom_bridge.is_longconn_enabled(),
+                "longconn_status": wecom_bridge.longconn_status(),
+                "callback_enabled": wecom_bridge.is_callback_enabled(),
+                "message": "WeCom ready" if wecom_bridge.is_push_enabled() else "WeCom webhook not set",
+            }
+
+        # Model info
+        model_info = {
+            "default": eternity.config.model.default or "",
+            "fast": eternity.config.model.fast or "",
+            "provider": eternity.config.model.provider or "",
+            "context_length": eternity.config.model.context_length or 0,
+        }
+
+        return {
+            "icon_finder": {
+                "available": icon_finder_available,
+                "dml": icon_finder_dml,
+                "message": f"Icon finder ready ({'DML' if icon_finder_dml else 'CPU'})" if icon_finder_available else "Icon finder model not loaded - icon detection disabled",
+            },
+            "ocr": {
+                "available": ocr_available,
+                "dml": ocr_dml,
+                "message": f"OCR ready ({'DML' if ocr_dml else 'CPU'})" if ocr_available else "OCR not loaded",
+            },
+            "im": im_status,
+            "cron": cron_status,
+            "wecom": wecom_status,
+            "model": model_info,
+        }
+
+    @app.get("/api/debug/memory")
+    def debug_memory():
+        """Debug endpoint: Python object stats + tracemalloc top allocations (if enabled)."""
+        import gc
+        import sys
+        import tracemalloc
+        from collections import defaultdict
+        from .mem_track import get_rss_mb
+
+        rss_mb = get_rss_mb()
+
+        # Object counts by type (top 30) — always available, no tracemalloc needed
+        type_counts = defaultdict(lambda: {"count": 0, "size": 0})
+        for obj in gc.get_objects():
+            t = type(obj).__name__
+            type_counts[t]["count"] += 1
+            try:
+                type_counts[t]["size"] += sys.getsizeof(obj)
+            except Exception:
+                pass
+
+        top_types = sorted(
+            type_counts.items(),
+            key=lambda x: x[1]["size"],
+            reverse=True,
+        )[:30]
+
+        result = {
+            "process_rss_mb": round(rss_mb, 1) if rss_mb is not None else None,
+            "top_types": [
+                {"type": t, "count": info["count"], "size_kb": round(info["size"] / 1024, 1)}
+                for t, info in top_types
+            ],
+        }
+
+        # tracemalloc data — only if enabled, guarded against TOCTOU race
+        try:
+            if tracemalloc.is_tracing():
+                tm_current, tm_peak = tracemalloc.get_traced_memory()
+                snapshot = tracemalloc.take_snapshot()
+                stats_by_file = snapshot.statistics("filename")
+                stats_by_line = snapshot.statistics("lineno")
+                result["tracemalloc"] = {
+                    "current_mb": round(tm_current / 1024 / 1024, 1),
+                    "peak_mb": round(tm_peak / 1024 / 1024, 1),
+                }
+                result["top_files"] = [
+                    {"file": str(s.traceback[0].filename) if s.traceback else "?",
+                     "size_kb": round(s.size / 1024, 1),
+                     "count": s.count}
+                    for s in stats_by_file[:20]
+                ]
+                result["top_lines"] = [
+                    {"file": str(s.traceback[0].filename) if s.traceback else "?",
+                     "line": s.traceback[0].lineno if s.traceback else 0,
+                     "size_kb": round(s.size / 1024, 1),
+                     "count": s.count}
+                    for s in stats_by_line[:20]
+                ]
+        except RuntimeError:
+            pass  # tracemalloc stopped between is_tracing() and take_snapshot()
+
+        return result
+
+    @app.post("/api/debug/memory/tracemalloc")
+    def toggle_tracemalloc(action: str = Query(..., pattern="^(start|stop)$")):
+        """Toggle tracemalloc on/off. Usage: POST /api/debug/memory/tracemalloc?action=start|stop"""
+        import tracemalloc
+        if action == "start":
+            if tracemalloc.is_tracing():
+                tracemalloc.stop()
+            tracemalloc.start(10)
+        else:
+            tracemalloc.stop()  # safe even if not tracing
+        return {"ok": True}
+
+    @app.get("/api/memory")
+    def get_memory_files():
+        """Read memory.md and user.md from enikk home memories directory."""
+        from tools.memory_tool import get_memory_dir
+        memories_dir = get_memory_dir()
+        memory_file = memories_dir / "memory.md"
+        user_file = memories_dir / "user.md"
+
+        memory_content = memory_file.read_text(encoding="utf-8") if memory_file.exists() else ""
+        user_content = user_file.read_text(encoding="utf-8") if user_file.exists() else ""
+
+        return {"memory": memory_content, "user": user_content}
+
+    class MemoryUpdateRequest(BaseModel):
+        filename: str  # "memory" or "user"
+        content: str
+
+    @app.put("/api/memory")
+    def save_memory_file(req: MemoryUpdateRequest):
+        """Save memory.md or user.md to enikk home memories directory."""
+        if req.filename not in ("memory", "user"):
+            raise HTTPException(status_code=400, detail="filename must be 'memory' or 'user'")
+
+        from tools.memory_tool import get_memory_dir
+        memories_dir = get_memory_dir()
+        memories_dir.mkdir(parents=True, exist_ok=True)
+        file_path = memories_dir / f"{req.filename}.md"
+
+        # Atomic write: temp file + rename to avoid race with MemoryStore
+        fd, tmp_path = tempfile.mkstemp(
+            dir=str(memories_dir), suffix=".tmp", prefix=".mem_"
+        )
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(req.content)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp_path, file_path)
+        except BaseException:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+            raise
+
+        telemetry.track_memory_modified(__version__)
+        return {"status": "saved", "filename": req.filename}
+
+    # ── Knowledge base (错题本 / 成功路径 / 业务知识) ──────────────────
+
+    @app.get("/api/knowledge/overview")
+    def knowledge_overview():
+        from . import knowledge as kb
+        return {
+            "root": str(kb.knowledge_root()),
+            "sources": {s: kb.list_files(s) for s in kb.VALID_SOURCES},
+        }
+
+    @app.get("/api/knowledge/file")
+    def knowledge_file(source: str = Query(...), name: str = Query(...)):
+        from . import knowledge as kb
+        try:
+            content = kb.read_file(source, name)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        except FileNotFoundError:
+            raise HTTPException(status_code=404, detail="File not found")
+        return {"source": source, "name": name, "content": content}
+
+    class KnowledgePromoteRequest(BaseModel):
+        source: str
+        name: str
+
+    @app.post("/api/knowledge/promote")
+    def knowledge_promote(req: KnowledgePromoteRequest):
+        """Review-pass a draft: strip the draft_ prefix so it gets recalled."""
+        from . import knowledge as kb
+        try:
+            new_name = kb.promote_draft(req.source, req.name)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        except FileNotFoundError:
+            raise HTTPException(status_code=404, detail="File not found")
+        except OSError as e:
+            raise HTTPException(status_code=500, detail=str(e))
+        return {"status": "promoted", "name": new_name}
+
+    @app.delete("/api/knowledge/file")
+    def knowledge_delete(source: str = Query(...), name: str = Query(...)):
+        from . import knowledge as kb
+        try:
+            kb.delete_file(source, name)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        except FileNotFoundError:
+            raise HTTPException(status_code=404, detail="File not found")
+        return {"status": "deleted"}
+
+    class CorrectionCreateRequest(BaseModel):
+        title: str
+        content: str
+
+    @app.post("/api/knowledge/corrections")
+    def knowledge_add_correction(req: CorrectionCreateRequest):
+        from . import knowledge as kb
+        try:
+            name = kb.add_correction(req.title, req.content)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        return {"status": "created", "name": name}
+
+    class KnowledgeImportRequest(BaseModel):
+        include_cases: bool = True
+
+    @app.post("/api/knowledge/import")
+    def knowledge_import(req: KnowledgeImportRequest):
+        from . import knowledge as kb
+        return kb.import_from_ioabot(include_cases=req.include_cases)
+
+    @app.get("/api/knowledge/search")
+    def knowledge_search(
+        q: str = Query(..., min_length=1),
+        source: str = Query("all"),
+        top_k: int = Query(5, ge=1, le=10),
+    ):
+        from . import knowledge as kb
+        sources = kb.VALID_SOURCES if source == "all" else (source,)
+        if source != "all" and source not in kb.VALID_SOURCES:
+            raise HTTPException(status_code=400, detail=f"source must be one of {kb.VALID_SOURCES} or 'all'")
+        return {"q": q, "hits": kb.search(q, sources=sources, top_k=top_k)}
+
+    @app.get("/api/config")
+    def get_config():
+        """Get current configuration."""
+        return eternity.config.to_dict()
+
+    @app.get("/api/providers")
+    def list_providers():
+        """List available providers from hermes-agent."""
+        providers = []
+        # Built-in providers with api_key auth only
+        for name, cfg in sorted(PROVIDER_REGISTRY.items()):
+            if cfg.auth_type != "api_key":
+                continue
+            # Note: hermes builtin 'alibaba' uses international dashscope (dashscope-intl.aliyuncs.com)
+            providers.append({
+                "name": name,
+                "display_name": name.replace("-", " ").title(),
+                "base_url": cfg.inference_base_url or "",
+                "auth_type": cfg.auth_type,
+                "builtin": True,
+            })
+
+        # Add alibaba-cn (China region) after alibaba
+        alibaba_cn = {
+            "name": "alibaba-cn",
+            "display_name": "Alibaba Cn",
+            "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+            "auth_type": "api_key",
+            "builtin": True,
+        }
+        # Find position after alibaba
+        insert_pos = None
+        for i, p in enumerate(providers):
+            if p["name"] == "alibaba":
+                insert_pos = i + 1
+                break
+        if insert_pos is not None:
+            providers.insert(insert_pos, alibaba_cn)
+        else:
+            providers.append(alibaba_cn)
+
+        # Add zhipu (智谱 GLM 开放平台, OpenAI-compatible: glm-5.3 / glm-5.3-flash)
+        providers.append({
+            "name": "zhipu",
+            "display_name": "Zhipu GLM (智谱)",
+            "base_url": "https://open.bigmodel.cn/api/paas/v4",
+            "auth_type": "api_key",
+            "builtin": True,
+        })
+
+        # Add Custom option at the end
+        providers.append({
+            "name": "custom",
+            "display_name": "Custom",
+            "base_url": "",
+            "auth_type": "api_key",
+            "builtin": False,
+        })
+
+        return {"providers": providers}
+
+    @app.put("/api/config")
+    def update_config(data: dict):
+        """Update configuration."""
+        try:
+            eternity.config.update_from_dict(data)
+            eternity.config.save()
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        return {"status": "updated"}
+
+    @app.get("/api/autostart")
+    def get_autostart():
+        """Query whether auto-start on boot is enabled (from Task Scheduler)."""
+        from .autostart import is_autostart_enabled
+        return {"enabled": is_autostart_enabled()}
+
+    class AutostartRequest(BaseModel):
+        enabled: bool
+
+    @app.put("/api/autostart")
+    def set_autostart(req: AutostartRequest):
+        """Enable or disable auto-start on boot."""
+        from .autostart import enable_autostart, disable_autostart
+        try:
+            if req.enabled:
+                enable_autostart()
+            else:
+                disable_autostart()
+        except RuntimeError as e:
+            raise HTTPException(status_code=500, detail=str(e))
+        # Sync config
+        eternity.config.autostart = req.enabled
+        eternity.config.save()
+        return {"status": "updated", "enabled": req.enabled}
+
+    @app.get("/api/apps")
+    def list_apps():
+        """List all registered apps."""
+        apps = []
+        for name, ac in eternity.config.apps.items():
+            apps.append({
+                "name": name,
+                "app_path": ac.app_path,
+                "launcher_path": ac.launcher_path,
+                "launch_timeout": ac.launch_timeout,
+            })
+        return {"apps": apps}
+
+    @app.post("/api/apps")
+    def register_app(data: dict):
+        """Register or update an app."""
+        name = data.get("name", "").strip()
+        app_path = data.get("app_path", "").strip()
+        if not name:
+            raise HTTPException(status_code=400, detail="name is required")
+        if not app_path:
+            raise HTTPException(status_code=400, detail="app_path is required")
+
+        # Check if app already exists
+        if name in eternity.config.apps:
+            # Update existing app
+            update_data = {"app_path": app_path}
+            if "launcher_path" in data:
+                update_data["launcher_path"] = data["launcher_path"]
+            if "launch_timeout" in data:
+                update_data["launch_timeout"] = int(data["launch_timeout"])
+            ac = eternity.config.update_app(name, **update_data)
+            if not ac:
+                raise HTTPException(status_code=404, detail=f"App not found: {name}")
+            return {"status": "updated", "app": {
+                "name": ac.name,
+                "app_path": ac.app_path,
+                "launcher_path": ac.launcher_path,
+                "launch_timeout": ac.launch_timeout,
+            }}
+        else:
+            # Register new app
+            ac = eternity.config.register_app(
+                name,
+                app_path,
+                launcher_path=data.get("launcher_path") or None,
+                launch_timeout=int(data["launch_timeout"]) if "launch_timeout" in data else 120,
+            )
+            return {"status": "registered", "app": {
+                "name": ac.name,
+                "app_path": ac.app_path,
+                "launcher_path": ac.launcher_path,
+                "launch_timeout": ac.launch_timeout,
+            }}
+
+    @app.delete("/api/apps/{name}")
+    def delete_app(name: str):
+        """Delete an app."""
+        if eternity.config.delete_app(name):
+            return {"status": "deleted", "name": name}
+        raise HTTPException(status_code=404, detail=f"App not found: {name}")
+
+    @app.put("/api/apps/{name}")
+    def update_app(name: str, data: dict):
+        """Update an existing app."""
+        if name not in eternity.config.apps:
+            raise HTTPException(status_code=404, detail=f"App not found: {name}")
+        update_data = {}
+        if "app_path" in data:
+            update_data["app_path"] = data["app_path"].strip()
+        if "launcher_path" in data:
+            update_data["launcher_path"] = data["launcher_path"]
+        if "launch_timeout" in data:
+            update_data["launch_timeout"] = int(data["launch_timeout"])
+        ac = eternity.config.update_app(name, **update_data)
+        if not ac:
+            raise HTTPException(status_code=400, detail="Update failed")
+        return {"status": "updated", "app": {
+            "name": ac.name,
+            "app_path": ac.app_path,
+            "launcher_path": ac.launcher_path,
+            "launch_timeout": ac.launch_timeout,
+        }}
+
+    # ── Window picker ──────────────────────────────────────────────
+
+    @app.get("/api/windows")
+    def list_windows():
+        """Enumerate all visible windows."""
+        ctrl = eternity.controller
+        if not ctrl:
+            raise HTTPException(status_code=503, detail="Controller not ready")
+        return ctrl.list_windows()
+
+    class PickRequest(BaseModel):
+        hwnd: int
+
+    @app.post("/api/pick")
+    def pick_window(req: PickRequest):
+        """Bind to a specific window."""
+        ctrl = eternity.controller
+        if not ctrl:
+            raise HTTPException(status_code=503, detail="Controller not ready")
+        result = ctrl.pick_window(req.hwnd)
+        if not result.get("success"):
+            raise HTTPException(status_code=400, detail=result.get("error", "Pick failed"))
+        return result
+
+    @app.post("/api/unpick")
+    def unpick_window():
+        """Unbind the currently picked window."""
+        ctrl = eternity.controller
+        if not ctrl:
+            raise HTTPException(status_code=503, detail="Controller not ready")
+        return ctrl.unpick_window()
+
+    @app.get("/api/pick")
+    def get_pick_status():
+        """Get info about the currently picked window."""
+        ctrl = eternity.controller
+        if not ctrl:
+            raise HTTPException(status_code=503, detail="Controller not ready")
+        picked = ctrl.get_picked_window()
+        overlay_active = ctrl.overlay_active
+        return {"picked": picked is not None, "window": picked, "overlay_active": overlay_active}
+
+    @app.post("/api/pick/overlay")
+    def show_overlay_picker():
+        """Launch the interactive fullscreen window picker overlay."""
+        ctrl = eternity.controller
+        if not ctrl:
+            raise HTTPException(status_code=503, detail="Controller not ready")
+        result = ctrl.show_overlay_picker()
+        if not result.get("success"):
+            raise HTTPException(status_code=409, detail=result.get("error", "Failed"))
+        telemetry.track_desktop_captured(__version__)
+        return result
+
+
+
+    @app.post("/api/model/test")
+    async def test_model_connection(req: dict):
+        """Test LLM API connection with given credentials."""
+        api_key = req.get("api_key", "")
+        model_name = req.get("default", "")
+        base_url = req.get("base_url", "")
+        provider = req.get("provider", "")
+
+        if not api_key:
+            return {"status": "failed", "message": "API Key is required"}
+        if not model_name:
+            return {"status": "failed", "message": "Model name is required"}
+
+        try:
+            # Detect API mode based on provider and base_url
+            api_mode = "chat_completions"  # default
+
+            # Check if it's Anthropic Messages API
+            if provider == "anthropic" or base_url.rstrip("/").endswith("/anthropic"):
+                api_mode = "anthropic_messages"
+
+            if api_mode == "anthropic_messages":
+                try:
+                    from anthropic import AsyncAnthropic
+                except ImportError:
+                    return {"status": "failed", "message": "anthropic package not installed"}
+
+                anthropic_client = AsyncAnthropic(
+                    api_key=api_key,
+                    base_url=base_url if base_url else None,
+                )
+
+                await anthropic_client.messages.create(
+                    model=model_name,
+                    max_tokens=1,
+                    messages=[{"role": "user", "content": "Hi"}],
+                )
+            else:
+                # OpenAI Chat Completions API (most providers)
+                try:
+                    from openai import AsyncOpenAI
+                except ImportError:
+                    return {"status": "failed", "message": "openai package not installed"}
+
+                openai_client = AsyncOpenAI(
+                    api_key=api_key,
+                    base_url=base_url if base_url else None,
+                )
+
+                await openai_client.chat.completions.create(
+                    model=model_name,
+                    messages=[{"role": "user", "content": "Hi"}],
+                    max_tokens=1,
+                )
+
+            return {"status": "success", "message": f"Connected to {model_name}"}
+        except Exception as e:
+            return {"status": "failed", "message": str(e)}
+
+    @app.post("/api/im/test")
+    async def test_im_connection(req: IMTestRequest):
+        """Test IM platform connection with given credentials."""
+        from .im_bridge import IMBridge
+        result = await IMBridge.test_connection(req.platform, req.token, req.extra)
+        if result["status"] == "error":
+            status_code = 400 if "Unknown platform" in result["message"] or "Unsupported" in result["message"] else 500
+            raise HTTPException(status_code=status_code, detail=result["message"])
+        elif result["status"] == "failed":
+            return result
+        return result
+
+    # ── WeCom (企业微信) ────────────────────────────────────────────────
+
+    @app.post("/api/wecom/test")
+    def test_wecom_webhook():
+        """Send a test message via the configured group-robot webhook."""
+        if wecom_bridge is None:
+            raise HTTPException(status_code=400, detail="WeCom bridge not initialized")
+        result = wecom_bridge.send_test_message()
+        if result["status"] == "failed":
+            return result
+        return result
+
+    @app.get("/api/wecom/longconn/status")
+    def wecom_longconn_status():
+        """Current WebSocket long-connection status: disabled/connecting/
+        connected/reconnecting: <error>/stopped. Poll this after saving Bot
+        ID/Secret and restarting Manufex to verify the connection came up;
+        there's no "send test message" for this mode without an existing
+        WeCom-side chat (chat with the bot in WeCom to test end-to-end).
+        """
+        if wecom_bridge is None:
+            return {"enabled": False, "status": "not_configured"}
+        return {"enabled": wecom_bridge.is_longconn_enabled(), "status": wecom_bridge.longconn_status()}
+
+    @app.get("/wecom/callback")
+    def wecom_verify_url(
+        msg_signature: str = Query(...),
+        timestamp: str = Query(...),
+        nonce: str = Query(...),
+        echostr: str = Query(...),
+    ):
+        """WeCom's one-time GET handshake when you save the callback URL in
+        the admin console. Must return the decrypted echostr as plain text.
+        """
+        if wecom_bridge is None or not wecom_bridge.is_callback_enabled():
+            raise HTTPException(status_code=400, detail="WeCom callback not configured")
+        try:
+            plain = wecom_bridge.handle_verify(msg_signature, timestamp, nonce, echostr)
+        except Exception as e:
+            logger.warning("WeCom verify_url failed: %s", e)
+            raise HTTPException(status_code=400, detail=str(e))
+        return PlainTextResponse(plain)
+
+    @app.post("/wecom/callback")
+    async def wecom_receive_message(
+        request: Request,
+        msg_signature: str = Query(...),
+        timestamp: str = Query(...),
+        nonce: str = Query(...),
+    ):
+        """WeCom pushes an encrypted XML body for every message sent to the
+        self-built app. We ack immediately (WeCom retries on non-2xx or
+        slow responses) and dispatch+reply asynchronously via the App
+        Message API, so a long-running Manufex task never blocks this
+        request.
+        """
+        if wecom_bridge is None or not wecom_bridge.is_callback_enabled():
+            raise HTTPException(status_code=400, detail="WeCom callback not configured")
+        raw_body = (await request.body()).decode("utf-8", errors="replace")
+        try:
+            wecom_bridge.handle_callback(raw_body, msg_signature, timestamp, nonce)
+        except Exception:
+            logger.warning("WeCom handle_callback failed", exc_info=True)
+        return PlainTextResponse("")
+
+    @app.get("/api/update")
+    def get_update_status():
+        """Check if a newer version is available."""
+        if get_update_info:
+            info = get_update_info()
+            if info:
+                return {
+                    "available": True,
+                    "version": info.version,
+                    "release_notes": info.release_notes,
+                    "html_url": info.html_url,
+                    "download_url": info.download_url,
+                }
+        return {"available": False}
+
+    # ── Skills browser ──────────────────────────────────────────────
+
+    @app.get("/api/skills")
+    def list_skills():
+        """List all skills from ~/.enikk/skills/ as a tree structure."""
+        import re
+        import yaml
+
+        skills_dir = enikk_home() / "skills"
+        if not skills_dir.is_dir():
+            return {"skills": []}
+
+        def parse_frontmatter(content: str) -> dict:
+            """Extract YAML frontmatter from markdown."""
+            match = re.match(r'^---\s*\n(.*?)\n---\s*\n', content, re.DOTALL)
+            if match:
+                try:
+                    return yaml.safe_load(match.group(1)) or {}
+                except Exception:
+                    return {}
+            return {}
+
+        def scan_dir(dir_path: Path, rel_prefix: str = "") -> list:
+            """Recursively scan directory for skills and categories."""
+            items = []
+            for child in sorted(dir_path.iterdir()):
+                rel_path = f"{rel_prefix}/{child.name}" if rel_prefix else child.name
+
+                if child.is_dir():
+                    # Check if this directory contains SKILL.md
+                    skill_md = child / "SKILL.md"
+                    if skill_md.is_file():
+                        # It's a skill
+                        try:
+                            content = skill_md.read_text(encoding="utf-8")
+                            meta = parse_frontmatter(content)
+                            # Find reference files
+                            refs = []
+                            refs_dir = child / "references"
+                            if refs_dir.is_dir():
+                                for ref in sorted(refs_dir.glob("*.md")):
+                                    refs.append(f"references/{ref.name}")
+                            items.append({
+                                "name": meta.get("name", child.name),
+                                "type": "skill",
+                                "path": rel_path,
+                                "description": meta.get("description", ""),
+                                "tags": meta.get("tags", []),
+                                "references": refs,
+                            })
+                        except Exception:
+                            logger.debug("Failed to parse skill: %s", skill_md, exc_info=True)
+                    else:
+                        # It's a category
+                        children = scan_dir(child, rel_path)
+                        if children:  # Only include non-empty categories
+                            items.append({
+                                "name": child.name,
+                                "type": "category",
+                                "path": rel_path,
+                                "children": children,
+                            })
+            return items
+
+        return {"skills": scan_dir(skills_dir)}
+
+    @app.get("/api/skills/{path:path}")
+    def get_skill_content(path: str):
+        """Read a skill or reference file content."""
+        skills_dir = enikk_home() / "skills"
+        target = (skills_dir / path).resolve()
+
+        # Security: ensure path is within skills directory
+        if not target.is_relative_to(skills_dir):
+            raise HTTPException(status_code=403, detail="Access denied")
+
+        if not target.is_file():
+            raise HTTPException(status_code=404, detail="File not found")
+
+        # Only allow markdown files
+        if target.suffix.lower() != ".md":
+            raise HTTPException(status_code=400, detail="Only .md files are supported")
+
+        try:
+            content = target.read_text(encoding="utf-8")
+            return {"path": path, "content": content}
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to read file: {e}")
+
+    class SkillUpdateRequest(BaseModel):
+        content: str
+
+    @app.put("/api/skills/{path:path}")
+    def save_skill_content(path: str, req: SkillUpdateRequest):
+        """Save a skill or reference file content."""
+        skills_dir = enikk_home() / "skills"
+        target = (skills_dir / path).resolve()
+
+        # Security: ensure path is within skills directory
+        if not target.is_relative_to(skills_dir):
+            raise HTTPException(status_code=403, detail="Access denied")
+
+        # Only allow markdown files
+        if target.suffix.lower() != ".md":
+            raise HTTPException(status_code=400, detail="Only .md files are supported")
+
+        if not target.is_file():
+            raise HTTPException(status_code=404, detail="File not found")
+
+        try:
+            target.write_text(req.content, encoding="utf-8")
+            return {"status": "saved", "path": path}
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to save file: {e}")
+
+    # ── Cron jobs ──────────────────────────────────────────────────
+
+    @app.get("/api/cron")
+    def list_cron_jobs(include_disabled: bool = Query(False)):
+        """List all cron jobs."""
+        jobs = cron_list(include_disabled=include_disabled)
+        return {"jobs": [j.to_dict() for j in jobs]}
+
+    class CreateCronJobRequest(BaseModel):
+        prompt: str = Field(min_length=1)
+        schedule: str = Field(min_length=1)
+        name: str | None = None
+        deliver: str = "im"
+        repeat: int | None = None
+        max_run_time: int | None = None
+
+    @app.post("/api/cron")
+    def create_cron_job(req: CreateCronJobRequest):
+        """Create a new cron job."""
+        try:
+            job = cron_create(
+                prompt=req.prompt,
+                schedule=req.schedule,
+                name=req.name,
+                deliver=req.deliver,
+                repeat=req.repeat,
+                max_run_time=req.max_run_time,
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        telemetry.track_cron_created(__version__, req.schedule)
+        return {"status": "created", "job": job.to_dict()}
+
+    @app.get("/api/cron/{job_id}")
+    def get_cron_job(job_id: str):
+        """Get a cron job by ID."""
+        job = cron_get(job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="Job not found")
+        return job.to_dict()
+
+    class UpdateCronJobRequest(BaseModel):
+        prompt: str | None = None
+        schedule: str | None = None
+        name: str | None = None
+        deliver: str | None = None
+        max_run_time: int | None = None
+
+    @app.patch("/api/cron/{job_id}")
+    def update_cron_job(job_id: str, req: UpdateCronJobRequest):
+        """Update a cron job."""
+        updates = {k: v for k, v in req.model_dump().items() if v is not None}
+        # max_run_time=0 means "clear to None (use global default)"
+        if "max_run_time" in updates and updates["max_run_time"] == 0:
+            updates["max_run_time"] = None
+        if not updates:
+            raise HTTPException(status_code=400, detail="No fields to update")
+        try:
+            job = cron_update(job_id, updates)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        if not job:
+            raise HTTPException(status_code=404, detail="Job not found")
+        return {"status": "updated", "job": job.to_dict()}
+
+    @app.delete("/api/cron/{job_id}")
+    def delete_cron_job(job_id: str):
+        """Delete a cron job."""
+        if not cron_remove(job_id):
+            raise HTTPException(status_code=404, detail="Job not found")
+        return {"status": "deleted"}
+
+    @app.post("/api/cron/{job_id}/pause")
+    def pause_cron_job(job_id: str):
+        """Pause a cron job."""
+        job = cron_pause(job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="Job not found")
+        return {"status": "paused", "job": job.to_dict()}
+
+    @app.post("/api/cron/{job_id}/resume")
+    def resume_cron_job(job_id: str):
+        """Resume a paused cron job."""
+        job = cron_resume(job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="Job not found")
+        return {"status": "resumed", "job": job.to_dict()}
+
+    @app.post("/api/cron/{job_id}/trigger")
+    def trigger_cron_job(job_id: str):
+        """Trigger a cron job to run immediately on next tick."""
+        job = cron_trigger(job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="Job not found")
+        return {"status": "triggered", "job": job.to_dict()}
+
+    @app.get("/api/cron/{job_id}/sessions")
+    def list_cron_sessions(
+        job_id: str,
+        limit: int = Query(20, ge=1, le=100),
+        offset: int = Query(0, ge=0),
+    ):
+        """List sessions for a specific cron job."""
+        job = cron_get(job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="Job not found")
+        return eternity.list_cron_sessions(job_id, limit=limit, offset=offset)
+
+    return app

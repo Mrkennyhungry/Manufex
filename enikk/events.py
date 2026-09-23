@@ -1,0 +1,9 @@
+"""Shared SSE event type constants."""
+
+EVT_DELTA = "delta"
+EVT_TOOL_CALL = "tool_call"
+EVT_TOOL_RESULT = "tool_result"
+EVT_REASONING = "reasoning"
+EVT_STEP_CONTEXT = "step_context"
+EVT_ERROR = "error"
+EVT_SESSION = "session"

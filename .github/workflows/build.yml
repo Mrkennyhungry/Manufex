@@ -1,0 +1,164 @@
+name: Build
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - "v*"
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        lfs: true
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v3
+      with:
+        version: "latest"
+
+    - name: Set up Python 3.12
+      run: uv python install 3.12
+
+    - name: Create virtual environment
+      run: uv venv
+
+    - name: Install dependencies
+      run: uv pip install -e ".[dev]"
+
+    - name: Build
+      run: .\build.bat
+
+    - name: Smoke test
+      timeout-minutes: 1
+      run: |
+        Write-Host "Starting smoke test..."
+        $exePath = "dist\enikk\enikk.exe"
+        $crashLog = "dist\enikk\enikk_crash.log"
+        $errorLog = "dist\enikk\enikk_error.log"
+        $proc = Start-Process -FilePath $exePath -PassThru
+        Start-Sleep -Seconds 10
+
+        # Check if process crashed (segfault via faulthandler)
+        # Note: enikk_crash.log is always created at startup (opened with "w"),
+        # so check for non-empty content rather than just existence.
+        if ((Test-Path $crashLog) -and ((Get-Item $crashLog).Length -gt 0)) {
+          $content = Get-Content $crashLog -Raw
+          Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+          Write-Error "Smoke test FAILED: App crashed (segfault)`n$content"
+          exit 1
+        }
+
+        # Check if process hit a Python startup error
+        if (Test-Path $errorLog) {
+          $content = Get-Content $errorLog -Raw
+          Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+          Write-Error "Smoke test FAILED: App startup error`n$content"
+          exit 1
+        }
+
+        # No crash logs — passed
+        if ($proc.HasExited) {
+          Write-Host "EXE exited with code $($proc.ExitCode) (no crash)"
+        } else {
+          Write-Host "Smoke test PASSED: EXE running, no crash logs"
+          Stop-Process -Id $proc.Id -Force
+        }
+
+    - name: Determine version
+      id: version
+      run: |
+        if ("${{ github.ref_type }}" -eq "tag") {
+          $version = "${{ github.ref_name }}"
+        } else {
+          $short = "${{ github.sha }}".Substring(0,7)
+          $version = "dev-$short"
+        }
+        "version=$version" >> $env:GITHUB_OUTPUT
+        Write-Host "Version: $version"
+
+    - name: Upload artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: enikk-${{ steps.version.outputs.version }}
+        path: dist/enikk/
+
+    - name: Comment artifact link on PR
+      if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const version = '${{ steps.version.outputs.version }}';
+          const owner = context.repo.owner;
+          const repo = context.repo.repo;
+          const runId = context.runId;
+
+          // Get artifact ID
+          const artifacts = await github.rest.actions.listWorkflowRunArtifacts({
+            owner,
+            repo,
+            run_id: runId
+          });
+          const artifactName = `enikk-${version}`;
+          const artifact = artifacts.data.artifacts.find(a => a.name === artifactName);
+
+          let downloadUrl;
+          let body;
+          if (artifact) {
+            downloadUrl = `https://github.com/${owner}/${repo}/actions/runs/${runId}/artifacts/${artifact.id}`;
+            body = `✅ Build succeeded! Artifact: \`${artifactName}\`\n\n📥 [Download artifact](${downloadUrl})`;
+          } else {
+            const runUrl = `https://github.com/${owner}/${repo}/actions/runs/${runId}`;
+            body = `✅ Build succeeded! Artifact: \`${artifactName}\`\n\n📥 [View Actions run](${runUrl})`;
+          }
+
+          // Find existing comment or create new one
+          const comments = await github.rest.issues.listComments({
+            owner,
+            repo,
+            issue_number: context.issue.number
+          });
+          const marker = '<!-- build-artifact -->';
+          const existing = comments.data.find(c => c.body.includes(marker));
+
+          const message = `${marker}\n${body}`;
+
+          if (existing) {
+            await github.rest.issues.updateComment({
+              owner,
+              repo,
+              comment_id: existing.id,
+              body: message
+            });
+          } else {
+            await github.rest.issues.createComment({
+              owner,
+              repo,
+              issue_number: context.issue.number,
+              body: message
+            });
+          }
+
+    - name: Create zip for release
+      if: startsWith(github.ref, 'refs/tags/')
+      run: |
+        $version = "${{ steps.version.outputs.version }}"
+        powershell -Command "Compress-Archive -Path 'dist/enikk' -DestinationPath 'dist/enikk-$version.zip' -Force"
+
+    - name: Create Release
+      if: startsWith(github.ref, 'refs/tags/')
+      uses: softprops/action-gh-release@v2
+      with:
+        files: dist/enikk-${{ steps.version.outputs.version }}.zip
+        generate_release_notes: true

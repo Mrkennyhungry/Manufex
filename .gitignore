@@ -1,0 +1,79 @@
+*.pyc
+__pycache__/
+*.egg-info/
+.venv/
+screenshots/
+build/
+dist/
+
+config.yaml
+
+# Doraemon data directory (config with secrets, sessions, screenshots, logs).
+# The knowledge/ subdirectory is EXCEPTION: it is team-shared and committable
+# (corrections / success_paths / kb). Ignore contents, then re-include knowledge.
+.enikk-home/*
+!.enikk-home/knowledge/
+# qcl_vars.yaml 是团队共享的用例变量（控制台 URL/账号、组织名、客户端路径等），
+# 随仓库分发，新机器克隆即得、无需手抄。⛔ 不要往这里放个人密钥/私有 token。
+!.enikk-home/qcl_vars.yaml
+
+# Skills are team-shared too (SKILL.md files guided real sessions — see
+# 2026-09-07 ioa session). Only WORK skills are shared; upstream game samples
+# (nikke, wuthering-waves) and anything else stays local.
+!.enikk-home/skills/
+.enikk-home/skills/*
+!.enikk-home/skills/ioa/
+!.enikk-home/skills/ioa-actions/
+!.enikk-home/skills/web-actions/
+!.enikk-home/skills/wecom/
+
+# Runtime logs & local artifacts
+*.log
+weights/
+enikk-run*.out.log
+enikk-run*.err.log
+pip-install*.log
+
+# Data files
+accounts/
+auth.json
+auth.lock
+logs/
+memories/
+sessions/
+trajectories/
+models_dev_cache.json
+SOUL.md
+view.py
+failed_trajectories.jsonl
+
+# IDE & Editor
+.vscode/
+.idea/
+
+# Claude Code
+.claude/*
+!.claude/commands/
+
+# Local one-off verification scripts (may contain real credentials — never commit)
+_live_*.py
+_smoke_*.py
+move_ioa.ps1
+
+# Unrelated third-party dir accidentally cloned here (has its own .git)
+.tmp-archify/
+# jev-ultrafast 评估用浅克隆（browser-use 参考项目，不参与构建）
+.tmp-jev/
+report/
+
+# 本地配置（含智研 token 等密钥，绝不入库）
+.env.local
+.env
+
+# 运行期生成的产物（含控制台登录态/动态账号，绝不入库）
+.auth/
+.runtime/
+_shots/
+
+# 用例运行期下载的安装包/客户端（PCMgrSetup*.exe 等，动辄数百 MB，绝不入库）
+downloads/

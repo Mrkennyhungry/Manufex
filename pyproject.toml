@@ -1,0 +1,96 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "enikk"
+dynamic = ["version"]
+description = "Manufex: a desktop agent that operates your computer for you (forked from Enikk v0.11.2)."
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [
+    { name = "gtt116", email = "gtt116@gmail.com" },
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: Microsoft :: Windows",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+    "fastapi==0.136.1",
+    "uvicorn==0.46.0",
+    "opencv-python==4.13.0.92",
+    "numpy==2.4.4",
+    "psutil==7.2.2",
+    "pywin32==311; sys_platform == 'win32'",
+    "rapidocr-onnxruntime==1.4.4",
+    "pyyaml==6.0.3",
+    "pyautogui==0.9.54",
+    "pynput==1.8.1",
+    "mss==10.2.0",
+    "playwright>=1.40",
+    "websockets>=12.0",
+    "Pillow==12.2.0",
+    # ⛔ 上界 <1.20 是硬约束：本机实测 ORT>=1.20 的 CPU 轮子在此 VM 上
+    # DllMain 失败（WinError 1114，见 docs/aladin-runner.md 坑 7），
+    # 只有 1.19.2 可用——加界防止 uv sync / pip 升级再次刷坏环境（2026-09-22 事故）
+    "onnxruntime>=1.19.2,<1.20",
+    "pywinauto==0.6.9",
+    "pywebview==6.2.1",
+    "hermes-agent==0.18.2",
+    "aiohttp==3.9.1",
+    "anthropic>=0.40.0",
+    "pystray==0.19.5",
+    "psutil>=6.0.0",
+    "croniter>=2.0.0",
+]
+
+[project.optional-dependencies]
+dml = [
+    # GPU 加速可选：与 rapidocr 依赖的 CPU 版 onnxruntime 写同一包目录，
+    # 二选一，装了 dml 就不要再装 CPU 版（pip install -e .[dml]）
+    "onnxruntime-directml>=1.24.0",
+]
+dev = [
+    "pytest==9.0.3",
+    "pytest-asyncio==1.4.0",
+    "ruff==0.15.15",
+    "mypy==2.1.0",
+    "pyinstaller==6.21.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/gtt116/enikk"
+Repository = "https://github.com/gtt116/enikk"
+Issues = "https://github.com/gtt116/enikk/issues"
+
+[tool.mypy]
+python_version = "3.11"
+ignore_missing_imports = true
+
+[project.scripts]
+enikk = "enikk.__main__:main"
+enikk-run = "enikk.run_cli:main"
+
+[tool.setuptools.dynamic]
+version = {attr = "enikk.version.__version__"}
+
+[tool.setuptools.packages.find]
+include = ["enikk*"]
+
+[tool.setuptools.package-data]
+enikk = ["static/**/*", "skills/**/*"]
+
+[tool.ruff]
+target-version = "py311"
+
+[tool.ruff.format]
+quote-style = "double"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+log_cli = true
+log_level = "DEBUG"

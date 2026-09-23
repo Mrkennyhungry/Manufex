@@ -1,0 +1,1988 @@
+// Main Alpine.js application component
+
+function chatApp() {
+  return {
+    sessions: [],
+    activeSessionId: null,
+    inputText: '',
+    isTyping: false,
+    _streamingMsg: null,
+    errorMessage: '',
+    _errorTimer: null,
+
+    showThinking: true,
+    thinkingExpanded: true,
+
+    showToolCalls: true,
+    toolCallsExpanded: false,
+    eventSource: null,
+    sidebarCollapsed: false,
+    showUserMenu: false,
+    showConfigModal: false,
+    configTab: 'basic',
+    config: {
+      model: { default: '', provider: '', base_url: '', api_key: '', max_tokens: 65535, context_length: 262144 },
+      parser: { url: '', token: '' },
+      im: { platforms: { qqbot: { enabled: false, token: '', extra: { app_id: '', client_secret: '' } } } },
+      wecom: { webhook_url: '', push_all_sessions: true, notify_tools: true, notify_images: true,
+        longconn_enabled: false, bot_id: '', bot_secret: '',
+        callback_enabled: false, corp_id: '', corp_secret: '', agent_id: '', token: '', encoding_aes_key: '', callback_path: '/wecom/callback', allowed_users: '' },
+      workspace: { screenshot_dir: '', weights_dir: '', screenshot_max_dim: 1366, max_iterations: 120 },
+      memory: { memory_enabled: true, nudge_interval: 10, creation_nudge_interval: 10 },
+      log_level: 'INFO',
+      close_behavior: 'ask',
+      autostart: false
+    },
+    wecomTesting: false,
+    wecomTestResult: '',
+    wecomLongconnStatus: '',
+    showWeComToken: false,
+    showWeComSecret: false,
+    showWeComCorpSecret: false,
+    showWeComBotSecret: false,
+    autostartToggling: false,
+    autostartError: '',
+    configSaving: false,
+    imTesting: false,
+    imTestResult: '',
+    showAppId: false,
+    showClientSecret: false,
+    showParserToken: false,
+    configSaved: false,
+    modelTesting: false,
+    modelTestResult: '',
+    systemStatus: { icon_finder: { available: false, dml: false, message: '' }, ocr: { available: false, dml: false, message: '' }, im: { enabled: false, connected: false, platform: null }, cron: { enabled: false, job_count: 0, message: '' }, model: { default: '', provider: '', context_length: 0 } },
+    modelTooltip: false,
+    iconFinderTooltip: false,
+    ocrTooltip: false,
+    imTooltip: false,
+    cronTooltip: false,
+    apps: [],
+    showAppEditor: false,
+    appEditor: { editing: false, name: '', app_path: '', launcher_path: '', launch_timeout: 120 },
+    providers: [],
+    contextLengthMode: 'auto',
+    appVersion: '',
+    updateInfo: null,  // {version, release_notes, html_url, download_url} or null
+    sidebarView: 'chat',  // 'chat' | 'skills' | 'cron' | 'memory' | 'debug'
+    skills: [],          // tree structure from /api/skills
+    selectedSkill: null, // {path, name, content} or null
+    selectedFile: 'SKILL.md',  // currently viewed file within the skill
+    skillEditing: false,       // whether skill file is in edit mode
+    skillEditContent: '',      // raw content being edited
+    renderedSkillContent: '',  // cached rendered markdown HTML
+    skillSearch: '',     // search filter
+    cronJobs: [],        // list of cron jobs from /api/cron
+    showCronEditor: false,
+    cronEditor: { editing: false, id: '', prompt: '', schedule: '', name: '', deliver: 'im', repeat: null, max_run_time: null },
+    _cronTimer: null,    // auto-refresh timer for cron view
+    cronJobFilter: null, // filter sessions by specific cron job ID
+    cronSearchQuery: '', // search query for filtering cron sessions
+    imSearchQuery: '', // search query for filtering IM sessions
+    sessionSearch: '',   // search query for filtering chat sessions
+    sessionTab: 'chat',  // 'chat', 'cron', or 'im' tab in session list
+    memoryContent: { memory: '', user: '' },  // content from /api/memory
+    memoryEditing: null,  // 'memory' or 'user' or null
+    memoryEditContent: '',  // content being edited
+    memorySaving: false,
+    memorySavedMessage: '',
+    _memorySavedTimer: null,
+    // Knowledge base view state (/api/knowledge/*)
+    kbData: null,            // {root, sources: {kb:[], corrections:[], success_paths:[]}}
+    kbLoading: false,
+    kbActiveSource: 'corrections',  // which list tab is shown
+    kbExpandedDirs: {},      // kb folder groups: {dir: bool}
+    kbSelected: null,        // {source, name} of open file
+    kbContent: '',           // content of open file
+    kbBusy: false,           // promote/delete in flight
+    kbSelectMode: false,     // multi-select mode toggle (per source tab)
+    kbChecked: {},           // {name: true} of checked files in the active source
+    kbBulkDeleting: false,
+    kbMessage: '',
+    _kbMessageTimer: null,
+    kbSearchQ: '',
+    kbSearchBusy: false,
+    kbSearchHits: null,      // null = not searched yet
+    kbImporting: false,
+    kbNewCorrectionOpen: false,
+    kbNewTitle: '',
+    kbNewContent: '',
+    kbAdding: false,
+    _refCache: {},      // cache for reference file contents
+    pickedWindow: null,   // {hwnd, title, pid, exe} or null
+    pickerLaunching: false,
+    showPlusMenu: false,
+    _pickerPollTimer: null,
+    _nextUid: 1,  // unique ID counter for message parts
+    _scrollTimer: null,
+    _streamMsgVer: 0,  // version counter to force x-for re-evaluation on SSE events
+    _showJumpBottom: false,
+    debugClicks: 0,
+    debugData: null,
+    debugLoading: false,
+    _debugTimer: null,
+    currentLang: 'zh-CN',
+    currentTipText: '',
+    // Register currentLang as a reactive dependency so Alpine re-evaluates all t() bindings when language changes
+    t(key, ...args) { void this.currentLang; return t(key, ...args); },
+
+    init() {
+      this.currentLang = currentLang;
+      window.addEventListener('language-changed', () => {
+        this.currentLang = currentLang;
+        this.$nextTick(() => this.$refs.inputRef?.focus());
+      });
+      this.fetchSessions();
+      this.fetchSystemStatus();
+      this.fetchPickStatus();
+      fetch('/api/version').then(r => r.ok ? r.json() : null).then(d => { if (d) this.appVersion = 'v' + d.version; }).catch(() => {});
+      this.fetchUpdateStatus();
+      this._systemStatusTimer = setInterval(() => this.fetchSystemStatus(), 5000);
+      // Initialize and rotate tips every 8 seconds (random order)
+      const tipText = (idx) => {
+        const tip = TIPS[idx];
+        return tip[this.currentLang] || tip['en'] || '';
+      };
+      let lastTipIndex = -1;
+      const getRandomTipIndex = () => {
+        let newIndex = Math.floor(Math.random() * TIPS.length);
+        // Avoid repeating the same tip consecutively
+        while (newIndex === lastTipIndex) {
+          newIndex = Math.floor(Math.random() * TIPS.length);
+        }
+        lastTipIndex = newIndex;
+        return newIndex;
+      };
+      this.currentTipText = tipText(getRandomTipIndex());
+      if (this._tipTimer) {
+        clearInterval(this._tipTimer);
+      }
+      this._tipTimer = setInterval(() => {
+        this.currentTipText = tipText(getRandomTipIndex());
+      }, 8000);
+      this.$nextTick(() => { this.initMarked(); });
+      window.addEventListener('popstate', (e) => {
+        const sessionId = e.state?.sessionId || new URLSearchParams(window.location.search).get('session');
+        if (sessionId && this.sessions.some(s => s.id === sessionId)) {
+          this.switchSession(sessionId);
+        }
+      });
+    },
+
+    async changeLanguage(lang) {
+      setLang(lang);
+      try {
+        await fetch('/api/config', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ language: lang })
+        });
+      } catch (e) {
+        console.error('Failed to save language to config:', e);
+      }
+    },
+
+    shakeModal() {
+      const modal = document.getElementById('config-modal-content');
+      modal.classList.remove('shake');
+      void modal.offsetWidth;
+      modal.classList.add('shake');
+    },
+
+    async fetchApps() {
+      try {
+        const resp = await fetch('/api/apps');
+        if (!resp.ok) throw new Error('HTTP ' + resp.status);
+        const data = await resp.json();
+        this.apps = data.apps || [];
+      } catch (e) {
+        console.error('Failed to fetch apps:', e);
+      }
+    },
+
+    addApp() {
+      this.appEditor = { editing: false, name: '', app_path: '', launcher_path: '', launch_timeout: 120 };
+      this.showAppEditor = true;
+    },
+
+    editApp(app) {
+      this.appEditor = {
+        editing: true,
+        name: app.name,
+        app_path: app.app_path,
+        launcher_path: app.launcher_path || '',
+        launch_timeout: app.launch_timeout || 120,
+      };
+      this.showAppEditor = true;
+    },
+
+    async saveApp() {
+      if (!this.appEditor.name.trim()) {
+        this.showError(this.t('apps.name_required'));
+        return;
+      }
+      if (!this.appEditor.app_path.trim()) {
+        this.showError(this.t('apps.path_required'));
+        return;
+      }
+      try {
+        const method = this.appEditor.editing ? 'PUT' : 'POST';
+        const url = this.appEditor.editing ? `/api/apps/${this.appEditor.name}` : '/api/apps';
+        const resp = await fetch(url, {
+          method,
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name: this.appEditor.name,
+            app_path: this.appEditor.app_path,
+            launcher_path: this.appEditor.launcher_path || null,
+            launch_timeout: this.appEditor.launch_timeout,
+          }),
+        });
+        if (!resp.ok) {
+          const err = await resp.json().catch(() => ({}));
+          throw new Error(err.detail || 'HTTP ' + resp.status);
+        }
+        this.showAppEditor = false;
+        await this.fetchApps();
+      } catch (e) {
+        this.showError(this.t('apps.save_failed') + ': ' + e.message);
+      }
+    },
+
+    showConfirmModal: false,
+    confirmMessage: '',
+    _confirmResolve: null,
+
+    confirmDialog(message) {
+      // If a previous dialog is still pending, resolve it as cancelled
+      if (this._confirmResolve) { this._confirmResolve(false); }
+      this.confirmMessage = message;
+      this.showConfirmModal = true;
+      return new Promise(resolve => { this._confirmResolve = resolve; });
+    },
+
+    confirmYes() {
+      this.showConfirmModal = false;
+      if (this._confirmResolve) { this._confirmResolve(true); this._confirmResolve = null; }
+    },
+
+    confirmNo() {
+      this.showConfirmModal = false;
+      if (this._confirmResolve) { this._confirmResolve(false); this._confirmResolve = null; }
+    },
+
+    async deleteApp(name) {
+      if (!await this.confirmDialog(this.t('apps.confirm_delete').replace('{name}', name))) return;
+      try {
+        const resp = await fetch(`/api/apps/${name}`, { method: 'DELETE' });
+        if (!resp.ok) {
+          const err = await resp.json().catch(() => ({}));
+          throw new Error(err.detail || 'HTTP ' + resp.status);
+        }
+        await this.fetchApps();
+      } catch (e) {
+        this.showError(this.t('apps.delete_failed') + ': ' + e.message);
+      }
+    },
+
+    // ── Window picker ──────────────────────────────────────────────
+
+    async fetchPickStatus() {
+      try {
+        const resp = await fetch('/api/pick');
+        if (resp.ok) {
+          const data = await resp.json();
+          this.pickedWindow = data.picked ? data.window : null;
+          return data;
+        }
+      } catch (e) {
+        console.error('Failed to fetch pick status:', e);
+      }
+      return null;
+    },
+
+    async launchOverlayPicker() {
+      if (this.pickerLaunching) return;
+      this.pickerLaunching = true;
+
+      try {
+        const resp = await fetch('/api/pick/overlay', { method: 'POST' });
+        if (!resp.ok) {
+          const err = await resp.json().catch(() => ({}));
+          throw new Error(err.detail || 'HTTP ' + resp.status);
+        }
+        // Poll every 500ms — stop when overlay closes (picked or cancelled)
+        if (this._pickerPollTimer) clearInterval(this._pickerPollTimer);
+        this._pickerPollTimer = setInterval(async () => {
+          const status = await this.fetchPickStatus();
+          if (!status || !status.overlay_active) {
+            clearInterval(this._pickerPollTimer);
+            this._pickerPollTimer = null;
+            this.pickerLaunching = false;
+          }
+        }, 500);
+      } catch (e) {
+        this.pickerLaunching = false;
+        this.showError(this.t('picker.launch_failed') + ': ' + e.message);
+      }
+    },
+
+    async unpickWindow() {
+      try {
+        const resp = await fetch('/api/unpick', { method: 'POST' });
+        if (resp.ok) {
+          this.pickedWindow = null;
+        }
+      } catch (e) {
+        this.showError(this.t('picker.unpick_failed') + ': ' + e.message);
+      }
+    },
+
+    async pickFile(target, ext) {
+      if (window.pywebview && window.pywebview.api && window.pywebview.api.pick_file) {
+        try {
+          const fileTypes = ext ? `*.${ext}` : '';
+          const result = await window.pywebview.api.pick_file(fileTypes);
+          if (result) {
+            const parts = target.split('.');
+            if (parts.length === 2) {
+              this[parts[0]][parts[1]] = result;
+            }
+          }
+        } catch (e) {
+          console.error('File picker failed:', e);
+        }
+      } else {
+        alert('File picker requires pywebview runtime');
+      }
+    },
+
+    async fetchSystemStatus() {
+      try {
+        const resp = await fetch('/api/status');
+        if (resp.ok) this.systemStatus = await resp.json();
+      } catch (e) {
+        // silent
+      }
+    },
+
+    async fetchUpdateStatus() {
+      try {
+        const resp = await fetch('/api/update');
+        if (resp.ok) {
+          const data = await resp.json();
+          this.updateInfo = data.available ? data : null;
+        }
+      } catch (e) {
+        // silent
+      }
+    },
+
+    async fetchSkills() {
+      try {
+        const resp = await fetch('/api/skills');
+        if (resp.ok) {
+          const data = await resp.json();
+          this.skills = data.skills || [];
+        }
+      } catch (e) {
+        // silent
+      }
+    },
+
+    async loadSkillContent(path) {
+      try {
+        const resp = await fetch(`/api/skills/${path}/SKILL.md`);
+        if (resp.ok) {
+          const data = await resp.json();
+          // Find skill info from tree
+          const skillInfo = this._findSkillByPath(this.skills, path);
+          this._refCache = {};
+          this.selectedFile = 'SKILL.md';
+          this.selectedSkill = {
+            path,
+            name: skillInfo?.name || path.split('/').pop(),
+            content: data.content,
+            references: skillInfo?.references || [],
+          };
+          // Preload reference files
+          for (const ref of this.selectedSkill.references) {
+            this._loadRef(ref);
+          }
+          this._updateRenderedContent();
+        }
+      } catch (e) {
+        // silent
+      }
+    },
+
+    async _loadRef(refPath) {
+      try {
+        const skillPath = this.selectedSkill?.path;
+        if (!skillPath) return;
+        const resp = await fetch(`/api/skills/${skillPath}/${refPath}`);
+        if (resp.ok) {
+          const data = await resp.json();
+          // Reassign to trigger Alpine reactivity
+          this._refCache = { ...this._refCache, [refPath]: data.content };
+          // Update rendered content if this is the currently viewed file
+          if (this.selectedFile === refPath) this._updateRenderedContent();
+        }
+      } catch (e) {
+        // silent
+      }
+    },
+
+    selectSkillFile(file) {
+      this.skillEditing = false;
+      this.selectedFile = file;
+      this._updateRenderedContent();
+    },
+
+    _updateRenderedContent() {
+      if (!this.selectedSkill) { this.renderedSkillContent = ''; return; }
+      if (this.selectedFile === 'SKILL.md') {
+        this.renderedSkillContent = this.renderMarkdown(this.selectedSkill.content);
+      } else {
+        const raw = this._refCache[this.selectedFile];
+        this.renderedSkillContent = raw ? this.renderMarkdown(raw) : '<span class="text-gray-400">Loading...</span>';
+      }
+    },
+
+    startEditSkill() {
+      if (this.selectedFile === 'SKILL.md') {
+        this.skillEditContent = this.selectedSkill?.content || '';
+      } else {
+        this.skillEditContent = this._refCache[this.selectedFile] || '';
+      }
+      this.skillEditing = true;
+    },
+
+    cancelEditSkill() {
+      this.skillEditing = false;
+      this.skillEditContent = '';
+    },
+
+    async saveSkill() {
+      if (!this.selectedSkill) return;
+      const path = this.selectedSkill.path + '/' + this.selectedFile;
+      try {
+        const resp = await fetch(`/api/skills/${path}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ content: this.skillEditContent }),
+        });
+        if (resp.ok) {
+          // Update local state
+          if (this.selectedFile === 'SKILL.md') {
+            this.selectedSkill = { ...this.selectedSkill, content: this.skillEditContent };
+          } else {
+            this._refCache = { ...this._refCache, [this.selectedFile]: this.skillEditContent };
+          }
+          this.skillEditing = false;
+          this.skillEditContent = '';
+          this._updateRenderedContent();
+        }
+      } catch (e) {
+        // silent
+      }
+    },
+
+    _findSkillByPath(items, targetPath) {
+      for (const item of items) {
+        if (item.type === 'skill' && item.path === targetPath) return item;
+        if (item.type === 'category' && item.children) {
+          const found = this._findSkillByPath(item.children, targetPath);
+          if (found) return found;
+        }
+      }
+      return null;
+    },
+
+    flattenSkills(items) {
+      const result = [];
+      for (const item of items) {
+        if (item.type === 'skill') result.push(item);
+        if (item.type === 'category' && item.children) {
+          result.push(...this.flattenSkills(item.children));
+        }
+      }
+      return result;
+    },
+
+    filterSkills(items) {
+      if (!this.skillSearch) return items;
+      const q = this.skillSearch.toLowerCase();
+      return items.filter(item => {
+        if (item.type === 'skill') {
+          return item.name.toLowerCase().includes(q) ||
+                 (item.description || '').toLowerCase().includes(q) ||
+                 (item.tags || []).some(t => t.toLowerCase().includes(q));
+        }
+        if (item.type === 'category') {
+          const filtered = this.filterSkills(item.children || []);
+          return filtered.length > 0 || item.name.toLowerCase().includes(q);
+        }
+        return false;
+      }).map(item => {
+        if (item.type === 'category') {
+          return { ...item, children: this.filterSkills(item.children || []) };
+        }
+        return item;
+      });
+    },
+
+    switchToMemory() {
+      this.sidebarView = 'memory';
+      this._clearCronTimer();
+      this.fetchMemoryFiles();
+    },
+
+    switchToSkills() {
+      this.sidebarView = 'skills';
+      this._clearCronTimer();
+      if (this.skills.length === 0) this.fetchSkills();
+    },
+
+    switchToChat() {
+      this.sidebarView = 'chat';
+      this._clearCronTimer();
+    },
+
+    // ── Memory files ──────────────────────────────────────────────
+
+    async fetchMemoryFiles() {
+      try {
+        const resp = await fetch('/api/memory');
+        if (resp.ok) this.memoryContent = await resp.json();
+      } catch (e) {
+        // silent
+      }
+    },
+
+    startEditMemory(filename) {
+      this.memoryEditing = filename;
+      this.memoryEditContent = this.memoryContent[filename] || '';
+    },
+
+    cancelEditMemory() {
+      this.memoryEditing = null;
+      this.memoryEditContent = '';
+    },
+
+    async saveMemory() {
+      if (!this.memoryEditing) return;
+      this.memorySaving = true;
+      try {
+        const resp = await fetch('/api/memory', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ filename: this.memoryEditing, content: this.memoryEditContent })
+        });
+        if (resp.ok) {
+          this.memoryContent[this.memoryEditing] = this.memoryEditContent;
+          this.memoryEditing = null;
+          this.memoryEditContent = '';
+          this.memorySavedMessage = t('memory.saved_hint');
+          if (this._memorySavedTimer) clearTimeout(this._memorySavedTimer);
+          this._memorySavedTimer = setTimeout(() => { this.memorySavedMessage = ''; }, 5000);
+        } else {
+          this.showError('Failed to save memory file');
+        }
+      } catch (e) {
+        this.showError('Failed to save: ' + e.message);
+      } finally {
+        this.memorySaving = false;
+      }
+    },
+
+    // ── Knowledge base (错题本 / 成功路径 / 业务知识) ─────────────
+
+    switchToKnowledge() {
+      this.sidebarView = 'knowledge';
+      this._clearCronTimer();
+      this.fetchKnowledge();
+    },
+
+    async fetchKnowledge() {
+      this.kbLoading = true;
+      try {
+        const resp = await fetch('/api/knowledge/overview');
+        if (resp.ok) {
+          this.kbData = await resp.json();
+          if (!this.kbData.sources[this.kbActiveSource]) this.kbActiveSource = 'corrections';
+        }
+      } catch (e) {
+        console.error('Knowledge fetch error:', e);
+      }
+      this.kbLoading = false;
+    },
+
+    // Group kb files by folder so 1000+ case runbooks don't render flat.
+    kbGroups() {
+      const files = this.kbData?.sources?.[this.kbActiveSource] || [];
+      if (this.kbActiveSource !== 'kb') return [{ dir: '', files }];
+      const rootFiles = [];
+      const map = new Map();
+      for (const f of files) {
+        const i = f.name.lastIndexOf('/');
+        if (i === -1) { rootFiles.push(f); continue; }
+        const dir = f.name.slice(0, i);
+        if (!map.has(dir)) map.set(dir, []);
+        map.get(dir).push(f);
+      }
+      const groups = Array.from(map.entries())
+        .sort((a, b) => a[0].localeCompare(b[0]))
+        .map(([dir, fs]) => ({ dir, files: fs }));
+      if (rootFiles.length) groups.unshift({ dir: '', files: rootFiles });
+      return groups;
+    },
+
+    toggleKbDir(dir) {
+      this.kbExpandedDirs = { ...this.kbExpandedDirs, [dir]: !this.kbExpandedDirs[dir] };
+    },
+
+    _showKbMessage(msg) {
+      this.kbMessage = msg;
+      if (this._kbMessageTimer) clearTimeout(this._kbMessageTimer);
+      this._kbMessageTimer = setTimeout(() => { this.kbMessage = ''; }, 8000);
+    },
+
+    async openKnowledgeFile(source, name) {
+      if (this.kbSelected && this.kbSelected.source === source && this.kbSelected.name === name) {
+        this.kbSelected = null;
+        this.kbContent = '';
+        return;
+      }
+      this.kbContent = '';
+      try {
+        const resp = await fetch('/api/knowledge/file?source=' + encodeURIComponent(source) + '&name=' + encodeURIComponent(name));
+        if (resp.ok) {
+          const data = await resp.json();
+          this.kbSelected = { source, name };
+          this.kbContent = data.content;
+        } else {
+          this._showKbMessage('加载失败: ' + resp.status);
+        }
+      } catch (e) {
+        this._showKbMessage('加载失败: ' + e.message);
+      }
+    },
+
+    async promoteKnowledge(source, name) {
+      this.kbBusy = true;
+      try {
+        const resp = await fetch('/api/knowledge/promote', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ source, name })
+        });
+        if (resp.ok) {
+          if (this.kbSelected && this.kbSelected.source === source && this.kbSelected.name === name) {
+            this.kbSelected = null;
+            this.kbContent = '';
+          }
+          await this.fetchKnowledge();
+          this._showKbMessage('已审核通过，进入正式知识库');
+        } else {
+          const detail = await resp.json().catch(() => ({}));
+          this._showKbMessage('审核失败: ' + (detail.detail || resp.status));
+        }
+      } catch (e) {
+        this._showKbMessage('审核失败: ' + e.message);
+      }
+      this.kbBusy = false;
+    },
+
+    async deleteKnowledgeFile(source, name) {
+      this.kbBusy = true;
+      try {
+        const resp = await fetch('/api/knowledge/file?source=' + encodeURIComponent(source) + '&name=' + encodeURIComponent(name), { method: 'DELETE' });
+        if (resp.ok) {
+          if (this.kbSelected && this.kbSelected.source === source && this.kbSelected.name === name) {
+            this.kbSelected = null;
+            this.kbContent = '';
+          }
+          await this.fetchKnowledge();
+        } else {
+          this._showKbMessage('删除失败: ' + resp.status);
+        }
+      } catch (e) {
+        this._showKbMessage('删除失败: ' + e.message);
+      }
+      this.kbBusy = false;
+    },
+
+    // ── Multi-select + bulk delete ───────────────────────────────
+
+    toggleKbSelectMode() {
+      this.kbSelectMode = !this.kbSelectMode;
+      this.kbChecked = {};
+    },
+
+    toggleKbChecked(name) {
+      const next = { ...this.kbChecked };
+      if (next[name]) delete next[name];
+      else next[name] = true;
+      this.kbChecked = next;
+    },
+
+    kbCheckedCount() {
+      return Object.keys(this.kbChecked).length;
+    },
+
+    kbAllVisibleNames() {
+      const files = this.kbData?.sources?.[this.kbActiveSource] || [];
+      return files.map(f => f.name);
+    },
+
+    kbToggleSelectAll() {
+      const names = this.kbAllVisibleNames();
+      if (this.kbCheckedCount() >= names.length) {
+        this.kbChecked = {};
+      } else {
+        const next = {};
+        names.forEach(n => { next[n] = true; });
+        this.kbChecked = next;
+      }
+    },
+
+    async bulkDeleteKnowledge() {
+      const names = Object.keys(this.kbChecked);
+      if (!names.length) return;
+      this.kbBulkDeleting = true;
+      let okCount = 0, failCount = 0;
+      for (const name of names) {
+        try {
+          const resp = await fetch('/api/knowledge/file?source=' + encodeURIComponent(this.kbActiveSource) + '&name=' + encodeURIComponent(name), { method: 'DELETE' });
+          if (resp.ok) okCount++; else failCount++;
+        } catch (e) {
+          failCount++;
+        }
+      }
+      this.kbChecked = {};
+      this.kbSelectMode = false;
+      await this.fetchKnowledge();
+      this._showKbMessage(failCount ? `已删除 ${okCount} 条，失败 ${failCount} 条` : `已删除 ${okCount} 条`);
+      this.kbBulkDeleting = false;
+    },
+
+    async importKnowledge() {
+      this.kbImporting = true;
+      try {
+        const resp = await fetch('/api/knowledge/import', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ include_cases: true })
+        });
+        if (resp.ok) {
+          const stats = await resp.json();
+          await this.fetchKnowledge();
+          this._showKbMessage(t('knowledge.import_done', stats.corrections, stats.success_paths, stats.playbooks, stats.cases, stats.skipped_cases || 0));
+        } else {
+          this._showKbMessage(t('knowledge.import_failed') + ': ' + resp.status);
+        }
+      } catch (e) {
+        this._showKbMessage(t('knowledge.import_failed') + ': ' + e.message);
+      }
+      this.kbImporting = false;
+    },
+
+    async searchKnowledge() {
+      const q = (this.kbSearchQ || '').trim();
+      if (!q) return;
+      this.kbSearchBusy = true;
+      try {
+        const resp = await fetch('/api/knowledge/search?q=' + encodeURIComponent(q) + '&top_k=6');
+        if (resp.ok) {
+          const data = await resp.json();
+          this.kbSearchHits = data.hits || [];
+        }
+      } catch (e) {
+        console.error('KB search error:', e);
+      }
+      this.kbSearchBusy = false;
+    },
+
+    openKbHit(source, path) {
+      this.kbActiveSource = source;
+      this.openKnowledgeFile(source, path);
+    },
+
+    async addCorrection() {
+      if (!this.kbNewTitle.trim() || !this.kbNewContent.trim()) return;
+      this.kbAdding = true;
+      try {
+        const resp = await fetch('/api/knowledge/corrections', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ title: this.kbNewTitle.trim(), content: this.kbNewContent.trim() })
+        });
+        if (resp.ok) {
+          this.kbNewCorrectionOpen = false;
+          this.kbNewTitle = '';
+          this.kbNewContent = '';
+          this.kbActiveSource = 'corrections';
+          await this.fetchKnowledge();
+          this._showKbMessage(t('knowledge.added_hint'));
+        } else {
+          this._showKbMessage('保存失败: ' + resp.status);
+        }
+      } catch (e) {
+        this._showKbMessage('保存失败: ' + e.message);
+      }
+      this.kbAdding = false;
+    },
+
+    // ── Debug memory ─────────────────────────────────────────────
+
+    switchToDebug() {
+      this.sidebarView = 'debug';
+      this.fetchDebugMemory();
+    },
+
+    async fetchDebugMemory() {
+      this.debugLoading = true;
+      try {
+        const resp = await fetch('/api/debug/memory');
+        if (resp.ok) {
+          this.debugData = await resp.json();
+        } else {
+          console.error('Debug memory fetch failed:', resp.status);
+        }
+      } catch (e) {
+        console.error('Debug memory fetch error:', e);
+      }
+      this.debugLoading = false;
+    },
+
+    async toggleTracemalloc(action) {
+      try {
+        const resp = await fetch('/api/debug/memory/tracemalloc?action=' + action, { method: 'POST' });
+        if (resp.ok) {
+          await this.fetchDebugMemory();
+        } else {
+          console.error('Tracemalloc toggle failed:', resp.status);
+        }
+      } catch (e) {
+        console.error('Tracemalloc toggle error:', e);
+      }
+    },
+
+    // ── Cron jobs ────────────────────────────────────────────────
+
+    switchToCron() {
+      this.sidebarView = 'cron';
+      this._clearCronTimer();
+      if (this.cronJobs.length === 0) this.fetchCronJobs();
+      this._cronTimer = setInterval(() => this.fetchCronJobs(), 10000);
+    },
+
+    _clearCronTimer() {
+      if (this._cronTimer) { clearInterval(this._cronTimer); this._cronTimer = null; }
+    },
+
+    async fetchCronJobs() {
+      try {
+        const resp = await fetch('/api/cron?include_disabled=true');
+        if (resp.ok) {
+          const data = await resp.json();
+          this.cronJobs = data.jobs || [];
+        }
+      } catch (e) { /* silent */ }
+    },
+
+    openCronEditor(job) {
+      if (job) {
+        this.cronEditor = {
+          editing: true, id: job.id,
+          prompt: job.prompt, schedule: job.schedule_display || '', name: job.name || '',
+          deliver: job.deliver || 'im',
+          repeat: job.repeat?.times ?? null,
+          max_run_time: job.max_run_time ?? null,
+        };
+      } else {
+        this.cronEditor = { editing: false, id: '', prompt: '', schedule: '', name: '', deliver: 'im', repeat: null, max_run_time: null };
+      }
+      this.showCronEditor = true;
+    },
+
+    closeCronEditor() {
+      this.showCronEditor = false;
+      this.cronEditor = { editing: false, id: '', prompt: '', schedule: '', name: '', deliver: 'im', repeat: null, max_run_time: null };
+    },
+
+    async saveCronJob() {
+      const ed = this.cronEditor;
+      if (!ed.prompt || !ed.schedule) { this.showError('Prompt and schedule are required'); return; }
+      try {
+        if (ed.editing) {
+          const body = {};
+          if (ed.prompt) body.prompt = ed.prompt;
+          if (ed.schedule) body.schedule = ed.schedule;
+          if (ed.name) body.name = ed.name;
+          if (ed.deliver) body.deliver = ed.deliver;
+          if (ed.repeat !== null && ed.repeat !== '') body.repeat = parseInt(ed.repeat);
+          if (ed.max_run_time !== null && ed.max_run_time !== '') body.max_run_time = parseInt(ed.max_run_time);
+          const resp = await fetch('/api/cron/' + ed.id, {
+            method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body),
+          });
+          if (!resp.ok) { const err = await resp.json().catch(() => ({})); throw new Error(err.detail || 'Update failed'); }
+        } else {
+          const body = { prompt: ed.prompt, schedule: ed.schedule, deliver: ed.deliver };
+          if (ed.name) body.name = ed.name;
+          if (ed.repeat !== null && ed.repeat !== '') body.repeat = parseInt(ed.repeat);
+          if (ed.max_run_time !== null && ed.max_run_time !== '') body.max_run_time = parseInt(ed.max_run_time);
+          const resp = await fetch('/api/cron', {
+            method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body),
+          });
+          if (!resp.ok) { const err = await resp.json().catch(() => ({})); throw new Error(err.detail || 'Create failed'); }
+        }
+        this.closeCronEditor();
+        await this.fetchCronJobs();
+      } catch (e) {
+        this.showError(e.message);
+      }
+    },
+
+    async deleteCronJob(id) {
+      if (!await this.confirmDialog(this.t('cron.confirm_delete'))) return;
+      try {
+        const resp = await fetch('/api/cron/' + id, { method: 'DELETE' });
+        if (!resp.ok) throw new Error('Delete failed');
+        await this.fetchCronJobs();
+      } catch (e) { this.showError(e.message); }
+    },
+
+    async pauseCronJob(id) {
+      await fetch('/api/cron/' + id + '/pause', { method: 'POST' });
+      await this.fetchCronJobs();
+    },
+
+    async resumeCronJob(id) {
+      await fetch('/api/cron/' + id + '/resume', { method: 'POST' });
+      await this.fetchCronJobs();
+    },
+
+    async triggerCronJob(id) {
+      await fetch('/api/cron/' + id + '/trigger', { method: 'POST' });
+      await this.fetchCronJobs();
+    },
+
+    viewCronJobSessions(jobId) {
+      this.cronJobFilter = jobId;
+      this.sessionTab = 'cron';
+      this.switchToChat();
+      this.fetchSessions();
+    },
+
+    viewAllCronSessions() {
+      this.cronJobFilter = null;
+      this.cronSearchQuery = '';
+      this.sessionTab = 'cron';
+      this.switchToChat();
+      this.fetchSessions();
+    },
+
+    clearCronJobFilter() {
+      this.cronJobFilter = null;
+    },
+
+    async fetchSessions() {
+      try {
+        const resp = await fetch('/api/sessions?limit=50');
+        if (!resp.ok) throw new Error('HTTP ' + resp.status);
+        const data = await resp.json();
+        console.log('[fetchSessions] API returned:', data.map(s => ({id: s.id, title: s.title, preview: s.preview, source: s.source, is_im: s.is_im})));
+        this.sessions = data.map(s => {
+          const sess = {
+            id: s.id,
+            title: s.title || s.preview || s.id.slice(0, 12),
+            createdAt: new Date(s.started_at * 1000),
+            messages: [],
+            messageCount: s.message_count,
+            isRunning: s.is_running || false,
+            isCron: s.is_cron || false,
+            isIm: s.is_im || false,
+          };
+          return sess;
+        });
+        if (this.sessions.length && !this.activeSessionId) {
+          const urlSessionId = new URLSearchParams(window.location.search).get('session');
+          const targetId = urlSessionId && this.sessions.some(s => s.id === urlSessionId)
+            ? urlSessionId
+            : this.sessions[0].id;
+          this.switchSession(targetId);
+        }
+      } catch (e) {
+        console.error('Failed to fetch sessions:', e);
+      }
+    },
+
+    initMarked() {
+      marked.setOptions({
+        highlight: (code, lang) => {
+          if (lang && hljs.getLanguage(lang)) return hljs.highlight(code, { language: lang }).value;
+          return hljs.highlightAuto(code).value;
+        },
+        breaks: true, gfm: true,
+      });
+    },
+
+    renderMarkdown(text) {
+      if (!text) return '';
+      return marked.parse(text);
+    },
+
+    isToolError(part) {
+      if (part.error) return true;
+      if (part.result && typeof part.result === 'string') {
+        try {
+          const obj = JSON.parse(part.result);
+          return obj && obj.error;
+        } catch { return false; }
+      }
+      return false;
+    },
+
+    prettyJson(text) {
+      if (!text) return '';
+      try {
+        const obj = typeof text === 'string' ? JSON.parse(text) : text;
+        return JSON.stringify(obj, null, 2);
+      } catch {
+        return text;
+      }
+    },
+
+    formatTime(ts) {
+      if (!ts) return '';
+      void this.currentLang;
+      const ms = String(Math.floor((ts % 1) * 1000)).padStart(3, '0');
+      const d = new Date(ts * 1000);
+      const now = new Date();
+      const locale = currentLang === 'zh-CN' ? 'zh-CN' : 'en-US';
+      const time = d.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit', second: '2-digit' }) + '.' + ms;
+      if (d.toDateString() === now.toDateString()) return time;
+      const yesterday = new Date(now); yesterday.setDate(now.getDate() - 1);
+      if (d.toDateString() === yesterday.toDateString()) return this.t('time.yesterday') + ' ' + time;
+      return (d.getMonth() + 1) + '/' + d.getDate() + ' ' + time;
+    },
+
+    getMsgText(msg) {
+      if (msg.parts && msg.parts.length) {
+        return msg.parts.filter(p => p.type === 'content').map(p => p.content).join('\n\n');
+      }
+      return msg.content || '';
+    },
+
+    activeMessages() {
+      const s = this.sessions.find(s => s.id === this.activeSessionId);
+      if (!s) return [];
+      const msgs = [...s.messages];
+      if (this._streamingMsg) msgs.push(this._streamingMsg);
+      return msgs;
+    },
+
+    activeSession() {
+      return this.sessions.find(s => s.id === this.activeSessionId) || null;
+    },
+
+    groupedSessions() {
+      const query = this.sessionSearch.toLowerCase().trim();
+      const filtered = this.sessions.filter(s => {
+        if (s.isCron || s.isIm) return false;
+        if (query && !s.title.toLowerCase().includes(query)) return false;
+        return true;
+      });
+      // Return flat list without time-based grouping
+      return [{ label: '', sessions: filtered }];
+    },
+
+    cronSessions() {
+      const sessions = this.sessions.filter(s => {
+        if (!s.isCron) return false;
+        // Filter by specific cron job if filter is set
+        if (this.cronJobFilter) {
+          const prefix = 'cron_' + this.cronJobFilter + '_';
+          if (!s.id.startsWith(prefix)) return false;
+        } else if (this.cronSearchQuery) {
+          // Search by job name or ID
+          const query = this.cronSearchQuery.toLowerCase();
+          const job = this.cronJobs.find(j => s.id.startsWith('cron_' + j.id + '_'));
+          if (!job || (!job.name.toLowerCase().includes(query) && !job.id.toLowerCase().includes(query))) {
+            return false;
+          }
+        }
+        return true;
+      });
+      return sessions;
+    },
+
+    imSessions() {
+      const query = this.imSearchQuery?.toLowerCase().trim();
+      return this.sessions.filter(s => {
+        if (!s.isIm) return false;
+        if (query && !s.title.toLowerCase().includes(query)) return false;
+        return true;
+      });
+    },
+
+    newChat() {
+      this.switchToChat();
+      if (this.eventSource) {
+        this.eventSource.close();
+        this.eventSource = null;
+      }
+      this.isTyping = false;
+      this._streaming = false;
+      this._streamingMsg = null;
+      this.activeSessionId = null;
+      this.editingSessionId = null;
+      history.pushState({}, '', window.location.pathname);
+      this.$nextTick(() => this.$refs.inputRef.focus());
+    },
+
+    switchSession(id) {
+      this.switchToChat();
+      if (this.eventSource) {
+        this.eventSource.close();
+        this.eventSource = null;
+      }
+      this.isTyping = false;
+      this._streaming = false;
+      this._streamingMsg = null;
+      this.editingSessionId = null;
+      this.activeSessionId = id;
+      history.pushState({ sessionId: id }, '', `?session=${id}`);
+      const session = this.sessions.find(s => s.id === id);
+      if (session && !session._loaded) {
+        session._loaded = true;
+        this.loadSessionMessages(id).then(() => {
+          if (session.isRunning) {
+            this.isTyping = true;
+            this._streaming = true;
+            this._streamingMsg = { role: 'assistant', content: '', images: [], parts: [], _streaming: true };
+            this.startStream(session);
+          }
+        });
+      } else if (session && session.isRunning) {
+        this.isTyping = true;
+        this._streaming = true;
+        this._streamingMsg = { role: 'assistant', content: '', images: [], parts: [], _streaming: true };
+        this.startStream(session);
+      }
+      this.$nextTick(() => this.scrollToBottom());
+    },
+
+    async loadSessionMessages(sessionId) {
+      try {
+        const resp = await fetch('/api/sessions/' + sessionId + '/messages?limit=100');
+        if (!resp.ok) throw new Error('HTTP ' + resp.status);
+        const data = await resp.json();
+        const session = this.sessions.find(s => s.id === sessionId);
+        if (!session) return;
+        if (this._streaming) return;
+        if (session.messages.some(m => m._streaming)) return;
+
+        const newMessages = this.buildMessages(data.messages);
+        session.messages.splice(0, session.messages.length);
+        session.messages.push(...newMessages);
+        session.hasMore = data.has_more;
+        this.$nextTick(() => this.scrollToBottom());
+      } catch (e) {
+        console.error('Failed to load messages:', e);
+      }
+    },
+
+    async loadMoreMessages(sessionId) {
+      const session = this.sessions.find(s => s.id === sessionId);
+      if (!session || !session.hasMore || session._loadingMore) return;
+
+      const firstMsg = session.messages[0];
+      if (!firstMsg || !firstMsg.id) return;
+
+      session._loadingMore = true;
+      const scrollEl = this.$refs.msgContainer;
+      const prevHeight = scrollEl.scrollHeight;
+
+      try {
+        const resp = await fetch(
+          `/api/sessions/${sessionId}/messages?limit=100&before_id=${encodeURIComponent(firstMsg.id)}`
+        );
+        if (!resp.ok) throw new Error('HTTP ' + resp.status);
+        const data = await resp.json();
+        const older = this.buildMessages(data.messages);
+        session.messages.unshift(...older);
+        session.hasMore = data.has_more;
+
+        this.$nextTick(() => {
+          scrollEl.scrollTop += scrollEl.scrollHeight - prevHeight;
+          session._loadingMore = false;
+        });
+      } catch (e) {
+        console.error('Failed to load more messages:', e);
+        session._loadingMore = false;
+      }
+    },
+
+    buildMessages(rawMessages) {
+      const result = [];
+      for (const m of rawMessages) {
+        if (m.role === 'tool' && m.tool_call_id) {
+          // Merge tool result into the preceding assistant message's tool_call part
+          for (let i = result.length - 1; i >= 0; i--) {
+            const prev = result[i];
+            if (prev.parts) {
+              const part = prev.parts.find(p => p.type === 'tool_call' && p.call_id === m.tool_call_id);
+              if (part) {
+                part.result = typeof m.content === 'string' ? m.content : JSON.stringify(m.content);
+                // Prefer duration_ms from the tool result itself, fall back to timestamp diff
+                let contentObj = m.content;
+                if (typeof contentObj === 'string') {
+                  try { contentObj = JSON.parse(contentObj); } catch(e) { contentObj = null; }
+                }
+                if (contentObj && typeof contentObj === 'object' && contentObj.duration_ms != null) {
+                  part.duration_ms = contentObj.duration_ms;
+                } else if (m.timestamp && prev.timestamp) {
+                  part.duration_ms = (m.timestamp - prev.timestamp) * 1000;
+                }
+                if (m.imageUrl) {
+                  // Insert image part after this tool_call part
+                  const idx = prev.parts.indexOf(part);
+                  prev.parts.splice(idx + 1, 0, { type: 'image', imageUrl: m.imageUrl, _uid: this._nextUid++ });
+                }
+                break;
+              }
+            }
+          }
+        } else if (m.role === 'assistant' || m.role === 'user') {
+          result.push(this.mapMessage(m));
+        }
+      }
+      return result;
+    },
+
+    mapMessage(m) {
+      const msg = { id: m.id, role: m.role, content: '', images: [], timestamp: m.timestamp };
+      let textContent = '';
+      if (typeof m.content === 'string') {
+        textContent = m.content;
+      } else if (Array.isArray(m.content)) {
+        const texts = [];
+        m.content.forEach(c => {
+          if (c.type === 'text') texts.push(c.text);
+          else if (c.type === 'image_url') msg.images.push(c.image_url.url);
+        });
+        textContent = texts.join('\n');
+      }
+      msg.content = textContent;
+
+      const parts = [];
+      if (m.reasoning) {
+        parts.push({ type: 'thinking', content: m.reasoning, done: true, _uid: this._nextUid++ });
+      }
+      if (m.tool_calls) {
+        m.tool_calls.forEach(tc => {
+          parts.push({
+            type: 'tool_call',
+            call_id: tc.id,
+            name: tc.function.name,
+            args: (() => { try { return JSON.parse(tc.function.arguments); } catch(e) { return tc.function.arguments; } })(),
+            _uid: this._nextUid++,
+          });
+        });
+      }
+      if (textContent) {
+        parts.push({ type: 'content', content: textContent, _uid: this._nextUid++ });
+      }
+      if (parts.length) {
+        msg.parts = parts;
+      }
+      return msg;
+    },
+
+    async deleteSession(id) {
+      const session = this.sessions.find(s => s.id === id);
+      const title = session?.title || id;
+      if (!await this.confirmDialog(this.t('sidebar.confirm_delete').replace('{title}', title))) return;
+      if (this.editingSessionId === id) this.editingSessionId = null;
+      try {
+        await fetch('/api/sessions/' + id, { method: 'DELETE' });
+      } catch (e) {
+        console.error('Failed to delete session:', e);
+      }
+      this.sessions = this.sessions.filter(s => s.id !== id);
+      if (this.activeSessionId === id) this.activeSessionId = this.sessions[0]?.id || null;
+    },
+
+    editingSessionId: null,
+    editingTitle: '',
+    _savingTitle: false,
+    _lastFailedTitle: null,
+
+    startEditTitle(session) {
+      this.editingSessionId = session.id;
+      this.editingTitle = session.title;
+      this._savingTitle = false;
+      this._lastFailedTitle = null;
+      this.$nextTick(() => {
+        const input = document.getElementById('title-edit-input');
+        if (input) { input.focus(); input.select(); }
+      });
+    },
+
+    async saveTitle() {
+      if (!this.editingSessionId || this._savingTitle) return;
+      const newTitle = this.editingTitle.trim();
+      if (!newTitle) {
+        this.editingSessionId = null;
+        return;
+      }
+      // Don't retry the same failing title on blur
+      if (newTitle === this._lastFailedTitle) return;
+      this._savingTitle = true;
+      try {
+        const resp = await fetch('/api/sessions/' + this.editingSessionId, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ title: newTitle })
+        });
+        if (!resp.ok) {
+          const error = await resp.json().catch(() => ({ detail: 'Unknown error' }));
+          throw new Error(error.detail || 'HTTP ' + resp.status);
+        }
+        const session = this.sessions.find(s => s.id === this.editingSessionId);
+        if (session) session.title = newTitle;
+        this._lastFailedTitle = null;
+        this.editingSessionId = null;
+      } catch (e) {
+        console.error('Failed to rename session:', e);
+        this.showError(this.t('sidebar.rename_failed') + ': ' + e.message);
+        this._lastFailedTitle = newTitle;
+      } finally {
+        this._savingTitle = false;
+      }
+    },
+
+    cancelEditTitle() {
+      this._savingTitle = false;
+      this._lastFailedTitle = null;
+      this.editingSessionId = null;
+    },
+
+    toggleSidebar() {
+      this.sidebarCollapsed = !this.sidebarCollapsed;
+      const el = document.getElementById('sidebar');
+      el.classList.toggle('collapsed', this.sidebarCollapsed);
+    },
+
+
+    handleEnter(e) {
+      if (e.shiftKey) { this.inputText += '\n'; this.$nextTick(() => this.autoResize(this.$refs.inputRef)); }
+      else this.sendMessage();
+    },
+
+    async sendMessage() {
+      let text = this.inputText.trim();
+      if (!text) return;
+
+      // Inject picked window info as structured context
+      if (this.pickedWindow) {
+        const w = this.pickedWindow;
+        const ctx = {};
+        if (w.title) ctx.title = w.title;
+        if (w.exe) ctx.exe = w.exe;
+        if (w.exe_path) ctx.exe_path = w.exe_path;
+        if (w.pid) ctx.pid = w.pid;
+        if (w.hwnd) ctx.hwnd = w.hwnd;
+        text = JSON.stringify({ picked_window: ctx }) + '\n' + text;
+      }
+
+      this.inputText = '';
+      this.$nextTick(() => this.autoResize(this.$refs.inputRef));
+
+      // If agent is running, just steer it (don't create new stream)
+      if (this.isTyping && this.activeSessionId) {
+        const session = this.sessions.find(s => s.id === this.activeSessionId);
+        if (!session) return;
+
+        // Freeze current streaming message and push to session.messages
+        // so user steer appears in the right chronological position
+        if (this._streamingMsg && this._streamingMsg.parts.length > 0) {
+          const frozen = { ...this._streamingMsg, _streaming: false };
+          session.messages.push(frozen);
+          this._streamingMsg = { role: 'assistant', content: '', images: [], parts: [], _streaming: true };
+        }
+
+        // Push user message immediately for responsive UX
+        session.messages.push({ role: 'user', content: text, images: [] });
+        this.$nextTick(() => this.scrollToBottom());
+
+        try {
+          const resp = await fetch(`/api/sessions/${session.id}/steer`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ message: text })
+          });
+          if (!resp.ok) {
+            const error = await resp.json().catch(() => ({ detail: 'Unknown error' }));
+            throw new Error(error.detail || 'HTTP ' + resp.status);
+          }
+        } catch (e) {
+          console.error('Failed to steer:', e);
+          this.showError(e.message);
+        }
+        return;
+      }
+
+      let session;
+      let userMsgPushed = false;
+      // Set guard BEFORE any await so loadSessionMessages won't replace messages
+      this._streaming = true;
+
+      if (!this.activeSessionId) {
+        // Create new session
+        try {
+          const resp = await fetch('/api/sessions', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ task: text })
+          });
+          if (!resp.ok) {
+            const error = await resp.json().catch(() => ({ detail: 'Unknown error' }));
+            throw new Error(error.detail || 'HTTP ' + resp.status);
+          }
+          const { session_id } = await resp.json();
+          session = {
+            id: session_id,
+            title: text.length > 28 ? text.slice(0, 28) + '…' : text,
+            createdAt: new Date(),
+            messages: [],
+            _loaded: true,
+          };
+          this.sessions.unshift(session);
+          this.activeSessionId = session_id;
+          history.pushState({ sessionId: session_id }, '', `?session=${session_id}`);
+        } catch (e) {
+          console.error('Failed to create session:', e);
+          this.showError(e.message);
+          this.inputText = text;
+          this._streaming = false;
+          this.$nextTick(() => this.autoResize(this.$refs.inputRef));
+          return;
+        }
+      } else {
+        session = this.sessions.find(s => s.id === this.activeSessionId);
+        if (!session) return;
+
+        // Push user message immediately for responsive UX
+        session.messages.push({ role: 'user', content: text, images: [] });
+        this.$nextTick(() => this.scrollToBottom());
+        userMsgPushed = true;
+
+        try {
+          const resp = await fetch(`/api/sessions/${session.id}/steer`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ message: text })
+          });
+          if (!resp.ok) {
+            const error = await resp.json().catch(() => ({ detail: 'Unknown error' }));
+            throw new Error(error.detail || 'HTTP ' + resp.status);
+          }
+        } catch (e) {
+          console.error('Failed to steer:', e);
+          this.showError(e.message);
+          return;
+        }
+      }
+
+      // Push user message for new session (steer already pushed above)
+      if (!userMsgPushed) {
+        session.messages.push({ role: 'user', content: text, images: [] });
+        this.$nextTick(() => this.scrollToBottom());
+      }
+      this.isTyping = true;
+
+      // Create streaming assistant message as separate Alpine property
+      this._streamingMsg = { role: 'assistant', content: '', images: [], parts: [], _streaming: true };
+
+      this.startStream(session);
+    },
+
+    startStream(session) {
+      if (this.eventSource) this.eventSource.close();
+
+      this.eventSource = new EventSource(`/api/sessions/${session.id}/stream`);
+
+      this.eventSource.onmessage = (event) => {
+        let parsed;
+        try {
+          parsed = JSON.parse(event.data);
+        } catch (e) {
+          console.error('SSE parse error:', e);
+          return;
+        }
+        const { event: type, data } = parsed;
+
+        if (type === 'tool_call') {
+          this._streamingMsg.parts = [
+            ...this._streamingMsg.parts,
+            {
+              type: 'tool_call',
+              call_id: data.call_id || 'stream-' + Date.now(),
+              name: data.name,
+              args: data.args,
+              _uid: this._nextUid++,
+            }
+          ];
+          this.$nextTick(() => this.scrollToBottom());
+        } else if (type === 'tool_result') {
+          const parts = [...this._streamingMsg.parts];
+          for (let i = parts.length - 1; i >= 0; i--) {
+            if (parts[i].type === 'tool_call' && parts[i].call_id === data.call_id && !parts[i].result) {
+              parts[i] = {
+                ...parts[i],
+                result: typeof data.result === 'string' ? data.result : JSON.stringify(data.result, null, 2),
+                duration_ms: data.duration_ms != null ? data.duration_ms : parts[i].duration_ms,
+              };
+              if (data.imageUrl) {
+                // Insert image part after this tool_call, matching buildMessages format
+                parts.splice(i + 1, 0, { type: 'image', imageUrl: data.imageUrl, _uid: this._nextUid++ });
+              }
+              break;
+            }
+          }
+          this._streamingMsg.parts = parts;
+          this.$nextTick(() => this.scrollToBottom());
+        } else if (type === 'delta') {
+          const parts = [...this._streamingMsg.parts];
+          const last = parts[parts.length - 1];
+          if (last && last.type === 'content' && !last._done) {
+            parts[parts.length - 1] = { ...last, content: last.content + data.text };
+          } else {
+            parts.push({ type: 'content', content: data.text, _uid: this._nextUid++ });
+          }
+          this._streamingMsg.parts = parts;
+          this.$nextTick(() => this.scrollToBottom());
+        } else if (type === 'reasoning') {
+          const parts = [...this._streamingMsg.parts];
+          const last = parts[parts.length - 1];
+          if (last && last.type === 'thinking') {
+            parts[parts.length - 1] = { ...last, content: last.content + data.text };
+          } else {
+            parts.push({ type: 'thinking', content: data.text, done: true, _uid: this._nextUid++ });
+          }
+          this._streamingMsg.parts = parts;
+          this.$nextTick(() => this.scrollToBottom());
+        } else if (type === 'session') {
+          if (data.status === 'completed' || data.status === 'error' || data.status === 'stopped') {
+            this.eventSource.close();
+            this.eventSource = null;
+            this.isTyping = false;
+            this._streaming = false;
+            if (data.status === 'stopped') {
+              this._streamingMsg.parts = [
+                ...this._streamingMsg.parts,
+                { type: 'content', content: '*Session stopped*', _uid: this._nextUid++ }
+              ];
+            }
+            // Fallback: if streaming was incomplete, append final_response
+            if (data.final_response && this._streamingMsg) {
+              const streamedContent = this._streamingMsg.parts
+                .filter(p => p.type === 'content')
+                .map(p => p.content)
+                .join('');
+              if (streamedContent.length < data.final_response.length) {
+                this._streamingMsg.parts = [
+                  ...this._streamingMsg.parts,
+                  { type: 'content', content: data.final_response.slice(streamedContent.length), _uid: this._nextUid++ }
+                ];
+              }
+            }
+            session.isRunning = false;
+            if (data.status === 'error' && this._streamingMsg) {
+              // Error message is already in _streamingMsg.parts from the
+              // 'error' SSE event. Freeze it into session.messages so it
+              // persists — loadSessionMessages would reload from DB and
+              // lose it since the error is not persisted there.
+              const frozen = { ...this._streamingMsg, _streaming: false };
+              session.messages.push(frozen);
+              this._streamingMsg = null;
+            } else {
+              this._streamingMsg = null;
+              this.loadSessionMessages(session.id);
+            }
+          }
+        } else if (type === 'step_context') {
+          if (data.current !== undefined && data.limit !== undefined) {
+            const pct = ((data.current / data.limit) * 100).toFixed(1);
+            const parts = [...this._streamingMsg.parts];
+            parts.push({ type: 'context', step: data.step, current: data.current, limit: data.limit, pct: pct, _uid: this._nextUid++ });
+            this._streamingMsg.parts = parts;
+            this.$nextTick(() => this.scrollToBottom());
+          }
+        } else if (type === 'error') {
+          console.error('Stream error:', data.message);
+          this._streamingMsg.parts = [
+            ...this._streamingMsg.parts,
+            { type: 'content', content: '**Error:** ' + data.message, _uid: this._nextUid++ }
+          ];
+        }
+        this._streamMsgVer++;
+      };
+
+      this.eventSource.onerror = () => {
+        this.isTyping = false;
+        if (this.eventSource) {
+          this.eventSource.close();
+          this.eventSource = null;
+        }
+        this._streaming = false;
+      };
+    },
+
+    async stopTyping() {
+      if (this.activeSessionId) {
+        try {
+          await fetch(`/api/sessions/${this.activeSessionId}/stop`, { method: 'POST' });
+        } catch (e) {
+          console.error('Failed to stop session:', e);
+        }
+      }
+      // Don't close EventSource or clear _streamingMsg here.
+      // The backend will emit a 'session: stopped' SSE event, which
+      // triggers the normal cleanup path (including loadSessionMessages).
+      // If no event arrives within 3s, fall back to manual cleanup.
+      setTimeout(() => {
+        if (this._streaming) {
+          if (this.eventSource) {
+            this.eventSource.close();
+            this.eventSource = null;
+          }
+          this.isTyping = false;
+          this._streaming = false;
+          this._streamingMsg = null;
+          if (this.activeSessionId) {
+            this.loadSessionMessages(this.activeSessionId);
+          }
+        }
+      }, 3000);
+    },
+
+    async copyMsg(text, btn) {
+      await navigator.clipboard.writeText(text).catch(() => {});
+      const orig = btn.innerHTML;
+      btn.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" fill="none" viewBox="0 0 24 24" stroke="#10a37f" stroke-width="2.5"><path d="M20 6L9 17l-5-5"/></svg>';
+      setTimeout(() => btn.innerHTML = orig, 1500);
+    },
+
+    openLightbox(src) {
+      document.getElementById('lightbox-img').src = src;
+      document.getElementById('lightbox').classList.add('open');
+    },
+
+    scrollToBottom() {
+      if (this._scrollTimer) return;
+      this._scrollTimer = setTimeout(() => {
+        this._scrollTimer = null;
+        const el = this.$refs.msgContainer;
+        if (el) el.scrollTop = el.scrollHeight;
+      }, 100);
+    },
+
+    handleScroll() {
+      const el = this.$refs.msgContainer;
+      if (!el) return;
+      // Show jump-to-bottom when scrolled more than 200px from bottom
+      this._showJumpBottom = (el.scrollHeight - el.scrollTop - el.clientHeight) > 200;
+      // Load more messages when near top
+      if (el.scrollTop <= 100) {
+        const session = this.sessions.find(s => s.id === this.activeSessionId);
+        if (session && session.hasMore && !session._loadingMore) {
+          this.loadMoreMessages(this.activeSessionId);
+        }
+      }
+    },
+
+    jumpToBottom() {
+      const el = this.$refs.msgContainer;
+      if (el) el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
+    },
+
+    async openDir(nameOrPath) {
+      try {
+        const params = new URLSearchParams();
+        if (nameOrPath === 'home' || nameOrPath === 'logs') {
+          params.set('name', nameOrPath);
+        } else {
+          params.set('path', nameOrPath);
+        }
+        await fetch('/api/open_dir?' + params.toString());
+      } catch (e) {
+        console.error('Failed to open directory:', e);
+      }
+    },
+
+    exitApp() {
+      if (typeof pywebview !== 'undefined' && pywebview.api && pywebview.api.exit_app) {
+        pywebview.api.exit_app();
+      }
+    },
+
+    autoResize(el) {
+      el.style.height = '28px';
+      el.style.height = Math.min(el.scrollHeight, 192) + 'px';
+    },
+
+    showError(message) {
+      this.errorMessage = message;
+      if (this._errorTimer) clearTimeout(this._errorTimer);
+      this._errorTimer = setTimeout(() => {
+        this.errorMessage = '';
+      }, 8000);
+    },
+
+    async openConfig(tab = 'basic') {
+      this.configTab = tab;
+      this.showConfigModal = true;
+      this.config = null;
+      this.configSaved = false;
+      await Promise.all([this.fetchApps(), this.loadProviders()]);
+      try {
+        const resp = await fetch('/api/config');
+        if (!resp.ok) throw new Error('HTTP ' + resp.status);
+        this.config = await resp.json();
+        // Set context_length mode based on current value
+        this.contextLengthMode = this.config.model?.context_length === 0 ? 'auto' : 'custom';
+        // Ensure qqbot platform exists
+        if (!this.config.im) this.config.im = { platforms: {} };
+        if (!this.config.im.platforms) this.config.im.platforms = {};
+        if (!this.config.im.platforms.qqbot) {
+          this.config.im.platforms.qqbot = { enabled: false, token: '', extra: {} };
+        }
+        if (!this.config.im.platforms.qqbot.extra) {
+          this.config.im.platforms.qqbot.extra = {};
+        }
+        if (!this.config.wecom) {
+          this.config.wecom = { webhook_url: '', push_all_sessions: true, notify_tools: true, notify_images: true,
+            longconn_enabled: false, bot_id: '', bot_secret: '',
+            callback_enabled: false, corp_id: '', corp_secret: '', agent_id: '', token: '', encoding_aes_key: '', callback_path: '/wecom/callback', allowed_users: '' };
+        } else {
+          if (this.config.wecom.longconn_enabled === undefined) this.config.wecom.longconn_enabled = false;
+          if (this.config.wecom.bot_id === undefined) this.config.wecom.bot_id = '';
+          if (this.config.wecom.bot_secret === undefined) this.config.wecom.bot_secret = '';
+        }
+        // Fetch actual autostart status from system (may differ from config)
+        this.autostartError = '';
+        try {
+          const autoResp = await fetch('/api/autostart');
+          if (autoResp.ok) {
+            const autoData = await autoResp.json();
+            this.config.autostart = autoData.enabled;
+          }
+        } catch (_) { /* ignore */ }
+      } catch (e) {
+        console.error('Failed to load config:', e);
+        this.showError('Failed to load configuration: ' + e.message);
+        this.showConfigModal = false;
+      }
+    },
+
+    async loadProviders() {
+      try {
+        const resp = await fetch('/api/providers');
+        if (!resp.ok) throw new Error('HTTP ' + resp.status);
+        const data = await resp.json();
+        this.providers = data.providers || [];
+      } catch (e) {
+        console.error('Failed to load providers:', e);
+        this.providers = [];
+      }
+    },
+
+    onProviderChange() {
+      const provider = this.providers.find(p => p.name === this.config.model.provider);
+      if (provider && provider.builtin) {
+        // Built-in provider: auto-fill base_url and set context_length to auto
+        this.config.model.base_url = provider.base_url;
+        this.contextLengthMode = 'auto';
+        this.config.model.context_length = 0;
+      }
+    },
+
+    onContextLengthModeChange() {
+      if (this.contextLengthMode === 'auto') {
+        this.config.model.context_length = 0;
+      } else if (this.config.model.context_length === 0) {
+        // Switching to custom mode with auto value, set default
+        this.config.model.context_length = 262144;
+      }
+    },
+
+    get isBuiltinProvider() {
+      if (!this.providers || !this.config?.model?.provider) return false;
+      const provider = this.providers.find(p => p.name === this.config.model.provider);
+      return provider && provider.builtin;
+    },
+
+    async saveConfig() {
+      if (!this.config) return;
+      this.configSaving = true;
+      this.configSaved = false;
+      try {
+        const resp = await fetch('/api/config', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(this.config)
+        });
+        if (!resp.ok) {
+          const error = await resp.json().catch(() => ({ detail: 'Unknown error' }));
+          throw new Error(error.detail || 'HTTP ' + resp.status);
+        }
+        this.configSaved = true;
+      } catch (e) {
+        console.error('Failed to save config:', e);
+        this.showError('Failed to save configuration: ' + e.message);
+      } finally {
+        this.configSaving = false;
+      }
+    },
+
+    async toggleAutostart() {
+      this.autostartToggling = true;
+      this.autostartError = '';
+      const enabled = this.config.autostart;
+      try {
+        const resp = await fetch('/api/autostart', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ enabled })
+        });
+        if (!resp.ok) {
+          const error = await resp.json().catch(() => ({ detail: 'Unknown error' }));
+          throw new Error(error.detail || 'HTTP ' + resp.status);
+        }
+      } catch (e) {
+        this.config.autostart = !enabled; // revert
+        this.autostartError = e.message;
+      } finally {
+        this.autostartToggling = false;
+      }
+    },
+
+    async testModelConnection() {
+      if (!this.config || !this.config.model) return;
+      this.modelTesting = true;
+      this.modelTestResult = '';
+      try {
+        const resp = await fetch('/api/model/test', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(this.config.model)
+        });
+        const data = await resp.json();
+        if (resp.ok && data.status === 'success') {
+          this.modelTestResult = '✓ Connection successful';
+        } else {
+          this.modelTestResult = '✗ ' + (data.message || 'Connection failed');
+        }
+      } catch (e) {
+        console.error('Model test failed:', e);
+        this.modelTestResult = '✗ Test failed: ' + e.message;
+      } finally {
+        this.modelTesting = false;
+        setTimeout(() => { this.modelTestResult = ''; }, 5000);
+      }
+    },
+
+    async testIMConnection(platform) {
+      if (!this.config || !this.config.im || !this.config.im.platforms || !this.config.im.platforms[platform]) return;
+      this.imTesting = true;
+      this.imTestResult = '';
+      try {
+        const ps = this.config.im.platforms[platform];
+        const resp = await fetch('/api/im/test', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            platform: platform,
+            token: ps.token,
+            extra: ps.extra || {}
+          })
+        });
+        const data = await resp.json();
+        if (resp.ok && data.status === 'success') {
+          this.imTestResult = '✓ Connection successful';
+        } else {
+          this.imTestResult = '✗ ' + (data.message || 'Connection failed');
+        }
+      } catch (e) {
+        console.error('IM test failed:', e);
+        this.imTestResult = '✗ Test failed: ' + e.message;
+      } finally {
+        this.imTesting = false;
+        setTimeout(() => { this.imTestResult = ''; }, 5000);
+      }
+    },
+
+    async testWeComWebhook() {
+      this.wecomTesting = true;
+      this.wecomTestResult = '';
+      try {
+        const resp = await fetch('/api/wecom/test', { method: 'POST' });
+        const data = await resp.json();
+        if (resp.ok && data.status === 'success') {
+          this.wecomTestResult = '✓ ' + (data.message || t('config.wecom_test_ok'));
+        } else {
+          this.wecomTestResult = '✗ ' + (data.message || data.detail || t('config.wecom_test_failed'));
+        }
+      } catch (e) {
+        console.error('WeCom test failed:', e);
+        this.wecomTestResult = '✗ ' + e.message;
+      } finally {
+        this.wecomTesting = false;
+        setTimeout(() => { this.wecomTestResult = ''; }, 6000);
+      }
+    },
+
+    async fetchWeComLongconnStatus() {
+      try {
+        const resp = await fetch('/api/wecom/longconn/status');
+        const data = await resp.json();
+        this.wecomLongconnStatus = data.enabled ? (data.status || 'unknown') : 'disabled';
+      } catch (e) {
+        console.error('WeCom longconn status fetch failed:', e);
+        this.wecomLongconnStatus = 'error';
+      }
+    },
+
+    async pickDir(target) {
+      if (typeof pywebview !== 'undefined' && pywebview.api && pywebview.api.pick_dir) {
+        try {
+          const currentValue = target.split('.').reduce((obj, key) => obj[key], this);
+          const selected = await pywebview.api.pick_dir(currentValue);
+          if (selected) {
+            const keys = target.split('.');
+            let obj = this;
+            for (let i = 0; i < keys.length - 1; i++) {
+              obj = obj[keys[i]];
+            }
+            obj[keys[keys.length - 1]] = selected;
+          }
+        } catch (e) {
+          console.error('pick_dir failed:', e);
+          this.showError('Failed to open directory picker');
+        }
+      } else {
+        this.showError('Directory picker is only available in the desktop app');
+      }
+    },
+  };
+}
+
+function closeLightbox() {
+  document.getElementById('lightbox').classList.remove('open');
+}
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeLightbox(); });
