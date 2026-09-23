@@ -4,6 +4,8 @@
 
 # Manufex
 
+[English](README.md) | [中文](README.zh-CN.md)
+
 **A desktop agent that operates your computer for you — multi-window awareness, app discovery,
 visual + DOM dual-channel automation, and a knowledge base that learns from every run.**
 
@@ -114,7 +116,9 @@ Then point Manufex at it: **Settings → Vision service** → URL `http://<host>
 the agent to call `ioa_parser_status`.
 
 Model weights (~1GB, `microsoft/OmniParser-v2.0` from HuggingFace) are **not stored in this
-repository** — the service downloads them automatically on first start.
+repository** — the service downloads them automatically on first start. If you prefer local
+weights for the agent's built-in YOLO/OCR fallback, grab `manufex-weights-0.1.0.zip` from the
+[Releases](https://github.com/Mrkennyhungry/Manufex/releases) page and unzip into `<repo>/weights/`.
 
 Browser automation (web tasks) works fine **without** any vision service.
 
