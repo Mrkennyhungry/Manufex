@@ -38,8 +38,19 @@ Tell it what you want in plain language — *"open Notepad and type hello world"
 - Windows 10 / 11 (desktop automation relies on the Win32 API)
 - Python 3.11 or 3.12
 - Any OpenAI-compatible LLM API (e.g. DeepSeek, Zhipu GLM, Dashscope, or a custom gateway)
-- Optional: a remote [OmniParser](https://github.com/microsoft/OmniParser) service for vision parsing
-  (no local GPU needed)
+- Optional: a remote [OmniParser](https://github.com/microsoft/OmniParser) service for vision
+  parsing — **this repo ships a self-hosted server, see [Vision service](#vision-service)**.
+  No local GPU needed in the agent itself.
+
+## Let an AI set it up for you
+
+This repository is **AI-onboardable**. If you use an AI coding assistant
+(Claude Code, Cursor, Codex, ...), open this repo and say:
+
+> *Read `docs/AI-SETUP.md` and set everything up for me. Ask me for the secrets you can't obtain.*
+
+The guide walks the assistant through the environment, the optional self-hosted vision service,
+config generation and a smoke test — you only supply your LLM API key.
 
 ## Quick start
 
@@ -56,8 +67,8 @@ playwright install chromium   # only needed for browser automation (one-time, ~1
 .\start-ioa-workbench.ps1
 
 # ③ On first launch, open Settings in the app and fill in:
-#    - Base config  → your LLM base_url / api_key / model name (required)
-#    - Vision service → remote OmniParser URL + token (optional; desktop vision only)
+#    - Base config    → your LLM base_url / api_key / model name (required)
+#    - Vision service → OmniParser URL + token (optional; see Vision service below)
 
 # ④ Try it: type a task like  open Notepad and type hello world
 ```
@@ -84,6 +95,28 @@ mouse / keyboard / clipboard  structured failure diagnosis
       Auto post-mortem → knowledge base
       (success paths / corrections, human-reviewed)
 ```
+
+## Vision service (self-hosted OmniParser)
+
+Desktop vision (`ioa_analyze`) talks to a remote OmniParser service. **This repo ships one** —
+a self-contained FastAPI server (YOLO icon detection + RapidOCR text, optional Florence-2 icon
+captioning) in [`omniparser-server/`](omniparser-server/).
+
+```bash
+cd omniparser-server
+docker build -t manufex/omniparser .
+docker run -d --gpus all -p 8077:8077 -e OMNIPARSER_TOKEN=<secret> manufex/omniparser
+```
+
+CPU-only pip instructions are in [`omniparser-server/README.md`](omniparser-server/README.md).
+Then point Manufex at it: **Settings → Vision service** → URL `http://<host>:8077` + your token
+(or set `PARSER_SERVICE_URL` / `PARSER_SERVICE_TOKEN` environment variables). Verify by asking
+the agent to call `ioa_parser_status`.
+
+Model weights (~1GB, `microsoft/OmniParser-v2.0` from HuggingFace) are **not stored in this
+repository** — the service downloads them automatically on first start.
+
+Browser automation (web tasks) works fine **without** any vision service.
 
 ## Safety design
 
