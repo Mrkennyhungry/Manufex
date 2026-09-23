@@ -16,16 +16,15 @@ import psutil
 import win32gui
 import win32process
 
-from .tool_decorator import tool, register_all_tools
-
-from .config import Config, AppConfig
+from .config import AppConfig, Config
 from .file_search import search_files
-from .game import capture, input as input_mod, process, window
-from .game.window_picker import WindowPicker, _resolve_real_pid, WindowPickerOverlay
+from .game import capture, process, window
+from .game import input as input_mod
+from .game.window_picker import WindowPicker, WindowPickerOverlay, _resolve_real_pid
 from .mem_track import mem_tag
 from .powershell import PowerShellService
+from .tool_decorator import register_all_tools, tool
 from .ui_parser import UIParser
-
 
 logger = logging.getLogger(__name__)
 
@@ -433,6 +432,7 @@ class AppController:
         what actually gets activated.
         """
         import win32gui
+
         from .game.window import is_effectively_foreground
         if is_effectively_foreground(hwnd):
             return None
@@ -903,8 +903,9 @@ class AppController:
     def _save_bbox_overlay(self, image, elements: list, path: str, *,
                            hwnd: int | None = None) -> None:
         """Draw normalized [0,1000] bboxes onto image and save to path."""
-        from PIL import Image, ImageDraw, ImageFont
         import colorsys
+
+        from PIL import Image, ImageDraw, ImageFont
 
         h, w = image.shape[:2]
         overlay = image.copy()

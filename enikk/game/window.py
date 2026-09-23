@@ -70,11 +70,13 @@ def _area(hwnd: int) -> int:
 
 def _rect_overlap_ratio(inner: tuple, outer: tuple) -> float:
     """Fraction of `inner` rect area covered by `outer` rect (0..1)."""
-    l = max(inner[0], outer[0]); t = max(inner[1], outer[1])
-    r = min(inner[2], outer[2]); b = min(inner[3], outer[3])
-    if r <= l or b <= t:
+    left = max(inner[0], outer[0])
+    top = max(inner[1], outer[1])
+    right = min(inner[2], outer[2])
+    bottom = min(inner[3], outer[3])
+    if right <= left or bottom <= top:
         return 0.0
-    inter = (r - l) * (b - t)
+    inter = (right - left) * (bottom - top)
     area = max(1, (inner[2] - inner[0]) * (inner[3] - inner[1]))
     return inter / area
 

@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
+from enikk.controller import extract_image_path
 from enikk.events import (
     EVT_DELTA,
     EVT_ERROR,
@@ -16,8 +17,6 @@ from enikk.events import (
     EVT_TOOL_RESULT,
 )
 from enikk.im_bridge import IMBridge
-from enikk.controller import extract_image_path
-
 
 # ── Helpers ─────────────────────────────────────────────────────────────
 

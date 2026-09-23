@@ -39,14 +39,12 @@ import time
 import uuid
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
-from typing import Optional
-from xml.sax.saxutils import escape as xml_escape
 
 import requests
 
 from .config import Config, enikk_home
-from .events import EVT_DELTA, EVT_TOOL_CALL, EVT_TOOL_RESULT, EVT_ERROR, EVT_SESSION
 from .controller import extract_image_path
+from .events import EVT_DELTA, EVT_ERROR, EVT_SESSION, EVT_TOOL_CALL, EVT_TOOL_RESULT
 
 logger = logging.getLogger(__name__)
 
@@ -750,7 +748,7 @@ class WeComBridge:
             await client.respond_markdown(req_id, text)
 
     async def _stream_to_longconn(self, client, req_id: str, session_id: str, from_user: str) -> None:
-        from .wecom_longconn import STREAM_MAX_LIFETIME, STREAM_FLUSH_INTERVAL
+        from .wecom_longconn import STREAM_FLUSH_INTERVAL, STREAM_MAX_LIFETIME
 
         stream_id = uuid.uuid4().hex
         stream_started_at = time.time()

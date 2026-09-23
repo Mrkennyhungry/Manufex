@@ -9,7 +9,6 @@ from fastapi.testclient import TestClient
 
 from enikk.server import create_app
 
-
 # ── Helpers ─────────────────────────────────────────────────────────────
 
 def _make_eternity():

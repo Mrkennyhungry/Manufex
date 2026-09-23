@@ -20,9 +20,7 @@ from __future__ import annotations
 import json
 import logging
 import math
-import os
 import re
-import shutil
 import time
 from collections import Counter
 from datetime import datetime
@@ -134,7 +132,6 @@ def search(
         if source not in VALID_SOURCES:
             continue
         for path in _iter_markdown(source):
-            rel = path.relative_to(source_dir(source)).as_posix()
             docs.append((path, source, _read_text(path)))
     if not docs:
         return []

@@ -30,10 +30,9 @@ import asyncio
 import base64
 import json
 import logging
-import time
 import uuid
 from dataclasses import dataclass, field
-from typing import Awaitable, Callable, Optional
+from typing import Awaitable, Callable
 
 logger = logging.getLogger(__name__)
 

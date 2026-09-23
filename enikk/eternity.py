@@ -17,15 +17,25 @@ import tools.skills_sync
 from hermes_state import SessionDB
 from tools.registry import registry
 
-from . import hermes_tools  # noqa: F401  explicit tool registration (frozen builds)
-from . import ioa_tools  # noqa: F401  IOA toolset: remote parser, multi-window, scoped file ops
-from . import web_tools  # noqa: F401  web toolset: Playwright DOM-level browser automation
+from . import (
+    hermes_tools,  # noqa: F401  explicit tool registration (frozen builds)
+    ioa_tools,  # noqa: F401  IOA toolset: remote parser, multi-window, scoped file ops
+    telemetry,
+    web_tools,  # noqa: F401  web toolset: Playwright DOM-level browser automation
+)
 from . import knowledge as knowledge_base  # noqa: F401  KB retrieval + run recording
-from .prompts import DEFAULT_SYSTEM_PROMPT
 from .config import Config
 from .controller import AppController, extract_image_path
-from .events import EVT_DELTA, EVT_TOOL_CALL, EVT_TOOL_RESULT, EVT_REASONING, EVT_STEP_CONTEXT, EVT_ERROR, EVT_SESSION
-from . import telemetry
+from .events import (
+    EVT_DELTA,
+    EVT_ERROR,
+    EVT_REASONING,
+    EVT_SESSION,
+    EVT_STEP_CONTEXT,
+    EVT_TOOL_CALL,
+    EVT_TOOL_RESULT,
+)
+from .prompts import DEFAULT_SYSTEM_PROMPT
 from .version import __version__
 
 logger = logging.getLogger(__name__)
@@ -376,6 +386,7 @@ class Eternity:
         skills are respected (no manifest bookkeeping, unlike skills_sync).
         """
         import shutil
+
         from .config import enikk_home
 
         src_root = Path(__file__).parent / "skills"

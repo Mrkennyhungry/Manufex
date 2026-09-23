@@ -9,9 +9,17 @@ import uuid
 from typing import Optional
 
 from .config import Config, enikk_home
-from .eternity import Eternity
 from .controller import extract_image_path
-from .events import EVT_DELTA, EVT_TOOL_CALL, EVT_TOOL_RESULT, EVT_REASONING, EVT_STEP_CONTEXT, EVT_ERROR, EVT_SESSION
+from .eternity import Eternity
+from .events import (
+    EVT_DELTA,
+    EVT_ERROR,
+    EVT_REASONING,
+    EVT_SESSION,
+    EVT_STEP_CONTEXT,
+    EVT_TOOL_CALL,
+    EVT_TOOL_RESULT,
+)
 
 logger = logging.getLogger(__name__)
 

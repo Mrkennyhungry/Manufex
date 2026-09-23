@@ -14,11 +14,11 @@ from .store import (
     create_job,
     get_job,
     list_jobs,
-    update_job,
-    remove_job,
     pause_job,
+    remove_job,
     resume_job,
     trigger_job,
+    update_job,
 )
 
 logger = logging.getLogger(__name__)

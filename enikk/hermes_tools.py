@@ -18,12 +18,12 @@ Covered by tests/test_hermes_tools.py, which simulates the frozen
 condition (discovery disabled) and asserts these tools still register.
 """
 
-import tools.memory_tool          # noqa: F401  toolset "memory"
+import tools.memory_tool  # noqa: F401  toolset "memory"
 import tools.session_search_tool  # noqa: F401  toolset "session_search"
-import tools.skill_manager_tool   # noqa: F401  toolset "skills" (skill_manage)
-import tools.skills_sync          # noqa: F401  bundled-skill seeding (not a tool)
-import tools.skills_tool          # noqa: F401  toolset "skills" (skills_list, skill_view)
-import tools.todo_tool            # noqa: F401  toolset "todo"
+import tools.skill_manager_tool  # noqa: F401  toolset "skills" (skill_manage)
+import tools.skills_sync  # noqa: F401  bundled-skill seeding (not a tool)
+import tools.skills_tool  # noqa: F401  toolset "skills" (skills_list, skill_view)
+import tools.todo_tool  # noqa: F401  toolset "todo"
 
 # Hermes-provided toolsets Enikk enables (the enikk-owned "app_controller"
 # and "enikk_cron" toolsets register themselves via their own modules).

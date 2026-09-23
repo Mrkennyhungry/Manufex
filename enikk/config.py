@@ -5,8 +5,8 @@ import json
 import logging
 import os
 from dataclasses import dataclass, field, fields
-from typing import ClassVar
 from pathlib import Path
+from typing import ClassVar
 
 import yaml
 

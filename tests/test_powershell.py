@@ -3,9 +3,9 @@ from unittest.mock import patch
 
 from enikk.powershell import (
     PowerShellService,
-    resolve_powershell_path,
     _sanitize_output,
     _truncate,
+    resolve_powershell_path,
 )
 
 

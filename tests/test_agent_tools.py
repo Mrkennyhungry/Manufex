@@ -17,7 +17,6 @@ from __future__ import annotations
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 import run_agent
 
 pytestmark = pytest.mark.skipif(
@@ -70,11 +69,12 @@ def agent():
     """A real AIAgent built the same way Eternity.setup() + create_session()
     builds it: registers app_controller / enikk_cron / ioa_tools /
     ioa_web_tools, then deregisters the dangerous tools."""
+    from tools.registry import registry
+
+    from enikk import ioa_tools, web_tools
     from enikk.controller import AppController
     from enikk.cron import register_cron_tools
     from enikk.eternity import ENABLED_TOOLSETS
-    from enikk import ioa_tools, web_tools
-    from tools.registry import registry
 
     with patch("enikk.controller.capture"), \
          patch("enikk.controller.input_mod"), \
@@ -111,8 +111,9 @@ def agent():
 
 def _expected_inventory() -> set[str]:
     """Full expected tool list for ENABLED_TOOLSETS in this environment."""
-    from enikk.hermes_tools import REQUIRED_TOOLS
     from hermes_state import DEFAULT_DB_PATH
+
+    from enikk.hermes_tools import REQUIRED_TOOLS
 
     expected = (set(APP_CONTROLLER_TOOLS) | set(CRON_TOOLS)
                 | set(IOA_TOOLS) | set(WEB_TOOLS) | set(REQUIRED_TOOLS))
@@ -149,8 +150,9 @@ class TestAgentToolInventory:
         assert not present, f"dangerous tools leaked into schema: {sorted(present)}"
 
     def test_hermes_tools_present(self, agent):
-        from enikk.hermes_tools import REQUIRED_TOOLS
         from hermes_state import DEFAULT_DB_PATH
+
+        from enikk.hermes_tools import REQUIRED_TOOLS
 
         expected = set(REQUIRED_TOOLS)
         if not DEFAULT_DB_PATH.parent.exists():
@@ -162,6 +164,7 @@ class TestAgentToolInventory:
         """enabled_toolsets filtering must keep unenabled tools (terminal,
         browser, ...) out of the agent schema."""
         from tools.registry import registry
+
         from enikk.eternity import ENABLED_TOOLSETS
 
         for name in sorted(agent.valid_tool_names):

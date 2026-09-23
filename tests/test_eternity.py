@@ -13,7 +13,6 @@ from enikk.events import (
     EVT_SESSION,
 )
 
-
 # ── Helpers ─────────────────────────────────────────────────────────────
 
 def _make_config():

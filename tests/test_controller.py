@@ -6,7 +6,6 @@ import pytest
 
 from enikk.controller import AppController
 
-
 # ── _text_similarity ───────────────────────────────────────────────────
 
 

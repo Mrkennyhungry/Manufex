@@ -28,7 +28,6 @@ from typing import get_type_hints
 
 from tools.registry import registry, tool_result
 
-
 logger = logging.getLogger(__name__)
 
 

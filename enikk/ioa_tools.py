@@ -14,7 +14,6 @@ the "ioa" toolset. It follows the same security posture as ioa-harness-poc:
 
 from __future__ import annotations
 
-import base64
 import json
 import logging
 import os
@@ -32,9 +31,9 @@ import psutil
 import requests
 import win32gui
 import win32process
-
-from .tool_decorator import tool, TOOLSET as _CONTROLLER_TOOLSET
 from tools.registry import registry, tool_result
+
+from .tool_decorator import tool
 
 # Agent automation environment: the cursor may legitimately rest at a screen
 # corner between actions; PyAutoGUI's corner fail-safe aborts hotkeys there.
@@ -730,8 +729,8 @@ def ioa_switch_window(window_id: str, wait: float = 1.0) -> dict:
     fg = win32gui.GetForegroundWindow()
     rect = None
     try:
-        l, t, r, b = win32gui.GetWindowRect(hwnd)
-        rect = {"left": l, "top": t, "width": r - l, "height": b - t}
+        left, top, right, bottom = win32gui.GetWindowRect(hwnd)
+        rect = {"left": left, "top": top, "width": right - left, "height": bottom - top}
     except Exception:
         pass
     return {
@@ -961,7 +960,6 @@ def ioa_press_key(window_id: str, key: str, count: int = 1) -> dict:
 
 @tool("向当前前台窗口逐字符键入英文/数字/符号（SendInput，不激活、不切换窗口——专为输入法敏感的输入框设计，如下拉搜索框）。⚠️ 输入法必须是英文态：中文态下英文字符会被 IME 组词框截获（丢失/变拼音/混入杂字符）——键入后必须复查框内值，发现缺字或异常：点任务栏输入法图标切英文，或改用 ioa_type_text（剪贴板粘贴，不走键盘、天然绕过 IME，中文内容必须用它）。要求目标窗口已是前台（通常刚用 ioa_click 点过输入框）；若不是前台会直接报错而不乱打。")
 def ioa_type_keys(window_id: str, text: str, interval: float = 0.03) -> dict:
-    import win32gui
     controller = _controller()
     if controller is None:
         return {"error": "IOA_NOT_READY: AppController 尚未初始化"}
@@ -1518,6 +1516,7 @@ def ioa_get_clipboard_text() -> dict:
 @tool("把一个或多个文件/文件夹写入剪贴板（CF_HDROP，等价于资源管理器里复制文件），并立即粘贴到已绑定窗口（内置 Ctrl+V）。发送文件到聊天/邮件输入框的标准做法。零激活：要求目标窗口已前台（否则拒绝，先 ioa_switch_window）。粘贴后不要再按 Ctrl+V。")
 def ioa_paste_clipboard_file(window_id: str, path: str = "", paths: list[str] | None = None) -> dict:
     import struct
+
     import win32clipboard
 
     raw_paths = ([path] if path else []) + list(paths or [])

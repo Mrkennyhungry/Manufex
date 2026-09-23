@@ -15,14 +15,19 @@ from fastapi.staticfiles import StaticFiles
 from hermes_cli.auth import PROVIDER_REGISTRY
 from pydantic import BaseModel, Field, field_validator
 
-from .config import enikk_home
 from . import telemetry
-from .cron import create_job as cron_create, list_jobs as cron_list, get_job as cron_get
-from .cron import update_job as cron_update, remove_job as cron_remove
-from .cron import pause_job as cron_pause, resume_job as cron_resume, trigger_job as cron_trigger
+from .config import enikk_home
+from .cron import create_job as cron_create
+from .cron import get_job as cron_get
+from .cron import list_jobs as cron_list
+from .cron import pause_job as cron_pause
+from .cron import remove_job as cron_remove
+from .cron import resume_job as cron_resume
+from .cron import trigger_job as cron_trigger
+from .cron import update_job as cron_update
 from .eternity import Eternity
 from .updater import UpdateInfo
-from .version import __version__, __description__
+from .version import __description__, __version__
 
 logger = logging.getLogger(__name__)
 
@@ -208,8 +213,8 @@ def create_app(
     def open_dir(name: str = Query(None, description="Directory name: 'home' or 'logs'"), path: str = Query(None, description="Arbitrary directory path to open")):
         """Open a directory in file explorer."""
         import os
-        import subprocess
         import platform
+        import subprocess
 
         if path:
             target = Path(path).resolve()
@@ -317,6 +322,7 @@ def create_app(
         import sys
         import tracemalloc
         from collections import defaultdict
+
         from .mem_track import get_rss_mb
 
         rss_mb = get_rss_mb()
@@ -592,7 +598,7 @@ def create_app(
     @app.put("/api/autostart")
     def set_autostart(req: AutostartRequest):
         """Enable or disable auto-start on boot."""
-        from .autostart import enable_autostart, disable_autostart
+        from .autostart import disable_autostart, enable_autostart
         try:
             if req.enabled:
                 enable_autostart()
@@ -902,6 +908,7 @@ def create_app(
     def list_skills():
         """List all skills from ~/.enikk/skills/ as a tree structure."""
         import re
+
         import yaml
 
         skills_dir = enikk_home() / "skills"

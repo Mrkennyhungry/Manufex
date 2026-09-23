@@ -6,7 +6,6 @@ from unittest.mock import MagicMock, patch
 
 from enikk.updater import UpdateInfo, _is_newer, check_for_update
 
-
 # ── _is_newer ──────────────────────────────────────────────────────────
 
 

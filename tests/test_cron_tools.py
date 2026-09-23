@@ -3,7 +3,7 @@ from unittest.mock import patch
 
 import pytest
 
-from enikk.cron.tools import register_cron_tools, TOOLSET
+from enikk.cron.tools import TOOLSET, register_cron_tools
 
 
 @pytest.fixture

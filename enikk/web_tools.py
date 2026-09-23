@@ -27,7 +27,6 @@ import os
 import re
 import shutil
 import threading
-import time
 from pathlib import Path
 from typing import Any
 
@@ -1093,6 +1092,7 @@ def web_close() -> dict:
 def register_web_tools() -> int:
     """Register every @tool function in this module under the ioa_web_tools toolset."""
     from tools.registry import registry, tool_result
+
     from .tool_decorator import _build_schema
 
     count = 0

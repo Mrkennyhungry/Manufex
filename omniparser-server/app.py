@@ -24,11 +24,9 @@ Then in Manufex: Settings → Vision service →
 """
 from __future__ import annotations
 
-import io
 import json
 import logging
 import os
-from functools import lru_cache
 
 import numpy as np
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
@@ -90,8 +88,8 @@ def load_models() -> None:
     if ENABLE_CAPTION:
         try:
             import torch as _t
-            from transformers import AutoModelForCausalLM, AutoProcessor
             from huggingface_hub import snapshot_download
+            from transformers import AutoModelForCausalLM, AutoProcessor
             cap_dir = snapshot_download("microsoft/OmniParser-v2.0", allow_patterns=["icon_caption_florence/*"])
             cap_dir = os.path.join(cap_dir, "icon_caption_florence")
             Models.florence_proc = AutoProcessor.from_pretrained(cap_dir, trust_remote_code=True)

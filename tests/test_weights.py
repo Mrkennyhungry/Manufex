@@ -3,7 +3,7 @@ import sys
 from pathlib import Path
 from unittest.mock import patch
 
-from enikk.weights import get_bundle_weights_dir, ensure_weights_ready
+from enikk.weights import ensure_weights_ready, get_bundle_weights_dir
 
 
 class TestGetBundleWeightsDir:

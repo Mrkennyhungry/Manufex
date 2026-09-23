@@ -1,5 +1,5 @@
 """Tests for file_search module."""
-from enikk.file_search import search_files, _search_powershell
+from enikk.file_search import _search_powershell, search_files
 
 
 class TestFileSearch:

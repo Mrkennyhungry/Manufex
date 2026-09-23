@@ -12,7 +12,7 @@ import threading
 from pathlib import Path
 
 # Parse --home-dir FIRST, before any other enikk imports
-from .version import __version__, __description__  # noqa: E402
+from .version import __description__, __version__  # noqa: E402
 
 _parser = argparse.ArgumentParser(prog="enikk", description=__description__)
 _parser.add_argument("--home-dir", type=str, help="Override Enikk home directory")
@@ -252,12 +252,13 @@ def main():
         os._exit(0)
 
     # ── Main-thread imports (lightweight; heavy deps deferred to the worker) ──
-    from .config import Config
-    from . import telemetry
-    from .tray import TrayManager
-    from .updater import check_for_update, UpdateInfo
-    from .webview_api import start_webview, WebviewAPI
     import webview as _wv
+
+    from . import telemetry
+    from .config import Config
+    from .tray import TrayManager
+    from .updater import UpdateInfo, check_for_update
+    from .webview_api import WebviewAPI, start_webview
 
     logo = (r"""
   _____   _   _  _____  _  __  _  __
@@ -524,7 +525,7 @@ def main():
             logger.info("Press Ctrl+C to stop.")
             try:
                 while True:
-                    time.sleep(3600)
+                    _time.sleep(3600)
             except KeyboardInterrupt:
                 logger.info("KeyboardInterrupt received")
         else:

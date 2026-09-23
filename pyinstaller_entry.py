@@ -1,9 +1,9 @@
 """Bootstrap script for PyInstaller — imports enikk package and runs main."""
-import sys
-import traceback
 import faulthandler
 import os
+import sys
 import threading
+import traceback
 
 # Enable faulthandler to catch segfaults — write to log file
 try:
